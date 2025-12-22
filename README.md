@@ -10,9 +10,10 @@ macOS doesn't reliably remember window positions when you disconnect and reconne
 
 Window Restore runs quietly in your menu bar and:
 
-- **Auto-saves** window positions every 30 seconds
+- **Auto-saves** window positions at a configurable interval (default: 30 seconds)
 - **Auto-restores** windows when monitors reconnect
 - **Remembers** different configurations for different monitor setups
+- **Cleans up** stale windows that haven't been seen in a configurable period
 
 ## Requirements
 
@@ -68,23 +69,30 @@ Create `Window Restore.app/Contents/Info.plist`:
 </plist>
 ```
 
-Sign the app (required for Accessibility permissions):
-
-```bash
-codesign --force --deep --sign - "Window Restore.app"
-```
-
-Move to Applications:
+Move to Applications and sign:
 
 ```bash
 mv "Window Restore.app" /Applications/
+codesign --force --deep --options runtime --sign "Developer ID Application: Your Name (TEAMID)" "/Applications/Window Restore.app"
 ```
+
+> **Note:** Signing with a Developer ID ensures accessibility permissions persist across app updates. Without proper signing, you'll need to re-grant permissions after each update.
+
+### Updating
+
+After making changes, use the build script:
+
+```bash
+./scripts/build-and-install.sh
+```
+
+This builds, installs, and signs the app in one step.
 
 ### Generate App Icon (Optional)
 
 ```bash
 swift generate-icon.swift
-iconutil -c icns AppIcon.iconset -o "Window Restore.app/Contents/Resources/AppIcon.icns"
+iconutil -c icns AppIcon.iconset -o "/Applications/Window Restore.app/Contents/Resources/AppIcon.icns"
 ```
 
 Add to Info.plist:
@@ -106,23 +114,47 @@ Add to Info.plist:
 
 3. The app runs in your menu bar with these options:
 
-| Menu Item | Shortcut | Description |
-|-----------|----------|-------------|
-| Save Window Positions Now | ⌘S | Manually save current positions |
-| Restore Window Positions | ⌘R | Manually restore positions |
-| Launch at Login | — | Start automatically on login |
-| About | — | App information |
-| Quit | ⌘Q | Exit the app |
+| Menu Item | Description |
+|-----------|-------------|
+| Save Window Positions Now | Manually save current positions |
+| Restore Window Positions (⌃⌘Z) | Manually restore positions |
+| Save Frequency | Choose save interval: 15s, 30s, 1min, 2min, 5min |
+| Keep Windows For | Choose cleanup threshold: 1, 3, 7, 14, 30 days |
+| Launch at Login | Start automatically on login |
+| How It Works… | Detailed explanation of app behavior |
+| About Window Restore | App information |
+| Quit | Exit the app |
+
+### Global Hotkey
+
+Press **⌃⌘Z** (Control + Command + Z) anywhere to restore window positions.
 
 ## How It Works
 
-1. **Saving**: Every 30 seconds, the app captures all window positions using the Accessibility API, noting each window's app, title, position, size, and which monitor it's on.
+### Saving
+- Window positions are automatically saved at your chosen interval
+- Each save captures windows visible on the current desktop
+- Windows from other desktops are preserved from previous saves
+- Windows are identified by app bundle ID + window title
 
-2. **Display Configuration**: Windows are saved per display configuration. A unique ID is generated based on connected monitors (vendor, model, serial number).
+### Restoring
+- Only moves windows visible on your current desktop
+- Each window is matched to its saved position by title
+- Switch to another desktop and restore again to fix those windows
 
-3. **Restoring**: When monitors reconnect, the app loads the saved configuration for that monitor setup and moves windows back to their saved positions.
+### Multiple Desktops
+- The app remembers windows across all your desktops
+- Visit each desktop periodically so windows get saved
+- Restore works per-desktop — switch desktops and restore as needed
 
-4. **Window Matching**: Windows are matched by app bundle ID and window title, allowing multiple windows from the same app to restore to different positions.
+### Monitor Changes
+- When you reconnect external monitors, restore triggers automatically
+- Different monitor configurations are saved separately
+
+### Cleanup
+- Windows not seen within the "Keep Windows For" period are removed
+- This prevents the saved data from growing indefinitely
+- Default threshold is 7 days
 
 ## Data Storage
 
@@ -133,11 +165,23 @@ Configurations are stored as JSON in:
 
 Each file is named `config-{hash}.json` where the hash represents a unique monitor configuration.
 
-## Running Tests
+## Development
+
+### Running Tests
 
 ```bash
 swift test
 ```
+
+### Dev Mode
+
+Run with logging enabled:
+
+```bash
+.build/debug/WindowRestore --dev
+```
+
+Logs are written to `~/Library/Application Support/WindowRestore/app.log`
 
 ## Architecture
 
@@ -145,19 +189,20 @@ swift test
 Sources/WindowRestore/
 ├── App/
 │   ├── WindowRestoreApp.swift    # Entry point
-│   └── AppDelegate.swift         # Menu bar setup
+│   └── AppDelegate.swift         # Menu bar, hotkey, scheduling
 ├── Models/
-│   ├── WindowSnapshot.swift      # Window state
+│   ├── WindowSnapshot.swift      # Window state with timestamp
 │   ├── DisplayInfo.swift         # Monitor info
 │   └── DisplayConfiguration.swift # Full config
 └── Services/
-    ├── WindowEnumerator.swift    # Get all windows
+    ├── WindowEnumerator.swift    # Get all windows via Accessibility API
     ├── WindowPositioner.swift    # Move windows
+    ├── WindowMerger.swift        # Merge & prune stale windows
     ├── DisplayMonitor.swift      # Detect monitor changes
     ├── DisplayInfoProvider.swift # Get monitor info
     ├── DisplayIdentifier.swift   # Stable monitor IDs
     ├── PersistenceService.swift  # Save/load configs
-    ├── SnapshotScheduler.swift   # 30-second timer
+    ├── SnapshotScheduler.swift   # Configurable timer
     └── RestoreCoordinator.swift  # Orchestrate restore
 ```
 

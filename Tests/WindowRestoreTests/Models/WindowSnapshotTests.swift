@@ -66,4 +66,48 @@ struct WindowSnapshotTests {
 
         #expect(decoded.frame.origin.x == -1920)
     }
+
+    @Test("WindowSnapshot with lastSeenAt encodes and decodes correctly")
+    func lastSeenAtEncodingDecoding() throws {
+        let now = Date()
+        let original = WindowSnapshot(
+            applicationBundleIdentifier: "com.apple.Safari",
+            applicationName: "Safari",
+            windowTitle: "Apple",
+            displayIdentifier: "display-abc123",
+            frame: CGRect(x: 100, y: 200, width: 800, height: 600),
+            lastSeenAt: now
+        )
+
+        let encoder = JSONEncoder()
+        let data = try encoder.encode(original)
+
+        let decoder = JSONDecoder()
+        let decoded = try decoder.decode(WindowSnapshot.self, from: data)
+
+        #expect(decoded.lastSeenAt == original.lastSeenAt)
+    }
+
+    @Test("WindowSnapshot decodes legacy JSON without lastSeenAt")
+    func legacyJsonDecoding() throws {
+        // JSON saved before lastSeenAt was added
+        let legacyJson = """
+        {
+            "applicationBundleIdentifier": "com.apple.Safari",
+            "applicationName": "Safari",
+            "windowTitle": "Apple",
+            "displayIdentifier": "display-abc123",
+            "frame": [[100, 200], [800, 600]]
+        }
+        """
+
+        let decoder = JSONDecoder()
+        let data = legacyJson.data(using: .utf8)!
+        let decoded = try decoder.decode(WindowSnapshot.self, from: data)
+
+        #expect(decoded.applicationBundleIdentifier == "com.apple.Safari")
+        #expect(decoded.applicationName == "Safari")
+        // lastSeenAt should get a default value (recent date)
+        #expect(decoded.lastSeenAt <= Date())
+    }
 }

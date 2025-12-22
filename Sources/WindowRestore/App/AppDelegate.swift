@@ -64,6 +64,19 @@ private let saveIntervalOptions: [(label: String, seconds: TimeInterval)] = [
     ("5 minutes", 300),
 ]
 
+// UserDefaults key for stale window threshold
+private let staleThresholdKey = "StaleWindowThresholdDays"
+private let defaultStaleThresholdDays: Int = 7
+
+// Available stale window thresholds (in days)
+private let staleThresholdOptions: [(label: String, days: Int)] = [
+    ("1 day", 1),
+    ("3 days", 3),
+    ("7 days", 7),
+    ("14 days", 14),
+    ("30 days", 30),
+]
+
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
@@ -84,6 +97,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         set {
             UserDefaults.standard.set(newValue, forKey: saveIntervalKey)
         }
+    }
+
+    private var currentStaleThresholdDays: Int {
+        get {
+            let saved = UserDefaults.standard.integer(forKey: staleThresholdKey)
+            return saved > 0 ? saved : defaultStaleThresholdDays
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: staleThresholdKey)
+        }
+    }
+
+    private var currentStaleThreshold: TimeInterval {
+        TimeInterval(currentStaleThresholdDays) * 24 * 3600
     }
 
     override public init() {
@@ -207,6 +234,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         saveFrequencyItem.submenu = saveFrequencySubmenu
         menu.addItem(saveFrequencyItem)
 
+        // Keep windows for submenu (stale window threshold)
+        let keepWindowsItem = NSMenuItem(title: "Keep Windows For", action: nil, keyEquivalent: "")
+        let keepWindowsSubmenu = NSMenu()
+        for option in staleThresholdOptions {
+            let item = NSMenuItem(
+                title: option.label,
+                action: #selector(changeStaleThreshold),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = option.days
+            item.state = (currentStaleThresholdDays == option.days) ? .on : .off
+            keepWindowsSubmenu.addItem(item)
+        }
+        keepWindowsItem.submenu = keepWindowsSubmenu
+        menu.addItem(keepWindowsItem)
+
         let launchAtLoginItem = NSMenuItem(
             title: "Launch at Login",
             action: #selector(toggleLaunchAtLogin),
@@ -325,27 +369,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             return currentWindows
         }
 
-        // Create a set of unique identifiers for current windows
-        // Key: (bundleId, windowTitle)
-        var currentWindowKeys = Set<String>()
-        for window in currentWindows {
-            let key = "\(window.applicationBundleIdentifier)|\(window.windowTitle)"
-            currentWindowKeys.insert(key)
-        }
-
-        // Start with current windows
-        var mergedWindows = currentWindows
-
-        // Add windows from existing config that aren't currently visible
-        // (they're on other desktops)
-        for existingWindow in existingConfig.windows {
-            let key = "\(existingWindow.applicationBundleIdentifier)|\(existingWindow.windowTitle)"
-            if !currentWindowKeys.contains(key) {
-                mergedWindows.append(existingWindow)
-            }
-        }
-
-        return mergedWindows
+        return WindowMerger.merge(
+            currentWindows: currentWindows,
+            existingWindows: existingConfig.windows,
+            staleThreshold: currentStaleThreshold
+        )
     }
 
     private func restoreWindowPositions() {
@@ -425,6 +453,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         restartSchedulerWithInterval(newInterval)
     }
 
+    @objc private func changeStaleThreshold(_ sender: NSMenuItem) {
+        currentStaleThresholdDays = sender.tag
+        // Rebuild the menu to update checkmarks
+        statusItem?.menu = createMenu()
+        log("Stale threshold changed to \(sender.tag) days")
+    }
+
     @objc private func showHowItWorks(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "How Window Restore Works"
@@ -448,6 +483,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         Monitor Changes:
         • When you reconnect external monitors, restore triggers automatically
         • Different monitor configurations are saved separately
+
+        Cleanup:
+        • Windows not seen within the "Keep Windows For" period are removed
+        • This prevents the saved data from growing indefinitely
+        • Adjust the threshold via the menu (default: 7 days)
         """
         alert.alertStyle = .informational
         alert.runModal()
