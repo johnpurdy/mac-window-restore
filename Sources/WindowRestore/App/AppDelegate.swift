@@ -164,20 +164,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupGlobalHotkey() {
-        // Listen for Ctrl+Cmd+Z globally
+        // Listen for Ctrl+Cmd hotkeys globally
         globalHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            // Check for Ctrl+Cmd+Z
             let requiredFlags: NSEvent.ModifierFlags = [.control, .command]
             let pressedFlags = event.modifierFlags.intersection([.control, .command, .option, .shift])
 
-            if pressedFlags == requiredFlags && event.keyCode == 6 { // keyCode 6 = 'z'
+            guard pressedFlags == requiredFlags else { return }
+
+            switch event.keyCode {
+            case 6: // keyCode 6 = 'z'
                 log("Global hotkey triggered (Ctrl+Cmd+z)")
                 Task { @MainActor in
                     self?.restoreWindowPositions()
                 }
+            case 1: // keyCode 1 = 's'
+                log("Global hotkey triggered (Ctrl+Cmd+s)")
+                Task { @MainActor in
+                    self?.saveWindowPositions()
+                }
+            default:
+                break
             }
         }
-        log("Global hotkey registered")
+        log("Global hotkeys registered")
     }
 
     private func createStatusIcon() -> NSImage {
@@ -200,7 +209,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem.separator())
 
         let saveItem = NSMenuItem(
-            title: "Save Window Positions Now",
+            title: "Save Window Positions Now (⌃⌘S)",
             action: #selector(saveNow),
             keyEquivalent: ""
         )
