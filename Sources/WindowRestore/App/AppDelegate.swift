@@ -1,11 +1,62 @@
 import AppKit
 import ServiceManagement
 
+// Check for --dev flag
+let devMode = CommandLine.arguments.contains("--dev")
+
+// Simple file logger (only active in dev mode)
+final class FileLogger: @unchecked Sendable {
+    static let shared = FileLogger()
+    private let logURL: URL?
+    private let lock = NSLock()
+
+    private init() {
+        guard devMode else {
+            logURL = nil
+            return
+        }
+
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let logDir = appSupport.appendingPathComponent("WindowRestore")
+        try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
+        logURL = logDir.appendingPathComponent("app.log")
+
+        // Clear old log on startup
+        if let url = logURL {
+            try? "".write(to: url, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func log(_ message: String) {
+        guard devMode, let logURL = logURL else { return }
+
+        lock.lock()
+        defer { lock.unlock() }
+
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let line = "[\(timestamp)] \(message)\n"
+        print(line, terminator: "")
+
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            handle.seekToEndOfFile()
+            handle.write(line.data(using: .utf8)!)
+            handle.closeFile()
+        } else {
+            try? line.write(to: logURL, atomically: false, encoding: .utf8)
+        }
+    }
+}
+
+private func log(_ message: String) {
+    FileLogger.shared.log(message)
+}
+
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var snapshotScheduler: SnapshotScheduler?
     private var displayMonitor: DisplayMonitor?
+    private var globalHotkeyMonitor: Any?
 
     private let persistenceService = PersistenceService()
     private let displayInfoProvider = DisplayInfoProvider()
@@ -18,22 +69,35 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        log("Window Restore starting...")
+
         // Check accessibility permissions
         checkAccessibilityPermissions()
 
         // Set up menu bar
         setupStatusItem()
+        log("Menu bar setup complete")
+
+        // Set up global hotkey (Ctrl+Cmd+Z for restore)
+        setupGlobalHotkey()
 
         // Start the snapshot scheduler (30 seconds)
         startScheduler()
+        log("Scheduler started (30 second interval)")
 
         // Start display monitor
         startDisplayMonitor()
+        log("Display monitor started")
+
+        log("Window Restore ready")
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
         snapshotScheduler?.stop()
         displayMonitor?.stop()
+        if let monitor = globalHotkeyMonitor {
+            NSEvent.removeMonitor(monitor)
+        }
     }
 
     // MARK: - Setup
@@ -47,6 +111,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         statusItem?.menu = createMenu()
+    }
+
+    private func setupGlobalHotkey() {
+        // Listen for Ctrl+Cmd+Z globally
+        globalHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // Check for Ctrl+Cmd+Z
+            let requiredFlags: NSEvent.ModifierFlags = [.control, .command]
+            let pressedFlags = event.modifierFlags.intersection([.control, .command, .option, .shift])
+
+            if pressedFlags == requiredFlags && event.keyCode == 6 { // keyCode 6 = 'z'
+                log("Global hotkey triggered (Ctrl+Cmd+z)")
+                Task { @MainActor in
+                    self?.restoreWindowPositions()
+                }
+            }
+        }
+        log("Global hotkey registered")
     }
 
     private func createStatusIcon() -> NSImage {
@@ -71,15 +152,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let saveItem = NSMenuItem(
             title: "Save Window Positions Now",
             action: #selector(saveNow),
-            keyEquivalent: "s"
+            keyEquivalent: ""
         )
         saveItem.target = self
         menu.addItem(saveItem)
 
         let restoreItem = NSMenuItem(
-            title: "Restore Window Positions",
+            title: "Restore Window Positions (⌃⌘z)",
             action: #selector(restoreNow),
-            keyEquivalent: "r"
+            keyEquivalent: ""
         )
         restoreItem.target = self
         menu.addItem(restoreItem)
@@ -108,7 +189,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let quitItem = NSMenuItem(
             title: "Quit",
             action: #selector(quit),
-            keyEquivalent: "q"
+            keyEquivalent: ""
         )
         quitItem.target = self
         menu.addItem(quitItem)
@@ -150,25 +231,69 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Save & Restore
 
     private func saveWindowPositions() {
-        let windows = windowEnumerator.enumerateWindows()
+        log("Starting save...")
+        let currentWindows = windowEnumerator.enumerateWindows()
+        log("Enumerated \(currentWindows.count) windows")
+
         let displays = displayInfoProvider.getDisplays()
         let configId = displayInfoProvider.getCurrentConfigurationIdentifier()
+        log("Config ID: \(configId)")
+
+        // Merge with existing saved windows (preserves windows from other desktops)
+        let mergedWindows = mergeWindows(
+            currentWindows: currentWindows,
+            configId: configId
+        )
+        log("Merged to \(mergedWindows.count) total windows")
 
         let configuration = DisplayConfiguration(
             identifier: configId,
             displays: displays,
-            windows: windows,
+            windows: mergedWindows,
             capturedAt: Date()
         )
 
         do {
             try persistenceService.save(configuration: configuration)
+            log("Save successful")
         } catch {
-            print("Failed to save window positions: \(error)")
+            log("Failed to save: \(error.localizedDescription)")
         }
     }
 
+    private func mergeWindows(currentWindows: [WindowSnapshot], configId: String) -> [WindowSnapshot] {
+        // Load existing saved windows
+        guard let existingConfig = try? persistenceService.load(identifier: configId) else {
+            // No existing config, just use current windows
+            return currentWindows
+        }
+
+        // Create a set of unique identifiers for current windows
+        // Key: (bundleId, windowTitle)
+        var currentWindowKeys = Set<String>()
+        for window in currentWindows {
+            let key = "\(window.applicationBundleIdentifier)|\(window.windowTitle)"
+            currentWindowKeys.insert(key)
+        }
+
+        // Start with current windows
+        var mergedWindows = currentWindows
+
+        // Add windows from existing config that aren't currently visible
+        // (they're on other desktops)
+        for existingWindow in existingConfig.windows {
+            let key = "\(existingWindow.applicationBundleIdentifier)|\(existingWindow.windowTitle)"
+            if !currentWindowKeys.contains(key) {
+                mergedWindows.append(existingWindow)
+            }
+        }
+
+        return mergedWindows
+    }
+
     private func restoreWindowPositions() {
+        log("Starting restore...")
+
         let coordinator = RestoreCoordinator(
             persistenceService: persistenceService,
             displayInfoProvider: displayInfoProvider,
@@ -180,19 +305,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         let successCount = results.filter { $0.success }.count
         let failCount = results.filter { !$0.success }.count
 
-        if failCount > 0 {
-            print("Restored \(successCount) windows, failed \(failCount)")
+        log("Restore complete: \(successCount) succeeded, \(failCount) failed")
+
+        for result in results where !result.success {
+            log("Failed to restore \(result.snapshot.applicationName): \(result.error ?? "unknown")")
         }
     }
 
     // MARK: - Accessibility
 
     private func checkAccessibilityPermissions() {
-        // Use the string value directly to avoid Swift 6 concurrency issues with the C global
-        let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
-        let trusted = AXIsProcessTrustedWithOptions(options)
+        // First check without prompting
+        let trusted = AXIsProcessTrusted()
 
         if !trusted {
+            // Only prompt if not already trusted
+            let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
+            AXIsProcessTrustedWithOptions(options)
             print("Accessibility permissions not granted. Window positioning will not work.")
         }
     }
@@ -225,10 +354,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Menu Actions
 
     @objc private func saveNow(_ sender: Any?) {
+        log("Save menu item clicked")
         saveWindowPositions()
     }
 
     @objc private func restoreNow(_ sender: Any?) {
+        log("Restore menu item clicked")
         restoreWindowPositions()
     }
 

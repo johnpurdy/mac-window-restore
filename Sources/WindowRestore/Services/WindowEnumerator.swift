@@ -104,6 +104,9 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
 
         guard result == .success,
               let windows = windowsRef as? [AXUIElement] else {
+            if result != .success {
+                FileLogger.shared.log("AX error for PID \(pid): \(result.rawValue)")
+            }
             return []
         }
 
