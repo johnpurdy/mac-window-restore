@@ -51,6 +51,19 @@ private func log(_ message: String) {
     FileLogger.shared.log(message)
 }
 
+// UserDefaults key for save interval
+private let saveIntervalKey = "SaveIntervalSeconds"
+private let defaultSaveInterval: TimeInterval = 30.0
+
+// Available save intervals (in seconds)
+private let saveIntervalOptions: [(label: String, seconds: TimeInterval)] = [
+    ("15 seconds", 15),
+    ("30 seconds", 30),
+    ("1 minute", 60),
+    ("2 minutes", 120),
+    ("5 minutes", 300),
+]
+
 @MainActor
 public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
@@ -62,6 +75,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let displayInfoProvider = DisplayInfoProvider()
     private let windowEnumerator: WindowEnumerator
     private let windowPositioner = WindowPositioner()
+
+    private var currentSaveInterval: TimeInterval {
+        get {
+            let saved = UserDefaults.standard.double(forKey: saveIntervalKey)
+            return saved > 0 ? saved : defaultSaveInterval
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: saveIntervalKey)
+        }
+    }
 
     override public init() {
         self.windowEnumerator = WindowEnumerator(displayInfoProvider: displayInfoProvider)
@@ -81,9 +104,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Set up global hotkey (Ctrl+Cmd+Z for restore)
         setupGlobalHotkey()
 
-        // Start the snapshot scheduler (30 seconds)
+        // Start the snapshot scheduler
         startScheduler()
-        log("Scheduler started (30 second interval)")
+        log("Scheduler started (\(Int(currentSaveInterval)) second interval)")
 
         // Start display monitor
         startDisplayMonitor()
@@ -167,6 +190,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
+        // Save frequency submenu
+        let saveFrequencyItem = NSMenuItem(title: "Save Frequency", action: nil, keyEquivalent: "")
+        let saveFrequencySubmenu = NSMenu()
+        for option in saveIntervalOptions {
+            let item = NSMenuItem(
+                title: option.label,
+                action: #selector(changeSaveInterval),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = Int(option.seconds)
+            item.state = (currentSaveInterval == option.seconds) ? .on : .off
+            saveFrequencySubmenu.addItem(item)
+        }
+        saveFrequencyItem.submenu = saveFrequencySubmenu
+        menu.addItem(saveFrequencyItem)
+
         let launchAtLoginItem = NSMenuItem(
             title: "Launch at Login",
             action: #selector(toggleLaunchAtLogin),
@@ -177,6 +217,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(launchAtLoginItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        let howItWorksItem = NSMenuItem(
+            title: "How It Works…",
+            action: #selector(showHowItWorks),
+            keyEquivalent: ""
+        )
+        howItWorksItem.target = self
+        menu.addItem(howItWorksItem)
 
         let aboutItem = NSMenuItem(
             title: "About Window Restore",
@@ -200,8 +248,9 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Scheduler & Monitor
 
     private func startScheduler() {
+        snapshotScheduler?.stop()
         snapshotScheduler = SnapshotScheduler(
-            interval: 30.0,
+            interval: currentSaveInterval,
             onSave: { [weak self] in
                 Task { @MainActor in
                     self?.saveWindowPositions()
@@ -209,6 +258,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         snapshotScheduler?.start()
+    }
+
+    private func restartSchedulerWithInterval(_ interval: TimeInterval) {
+        currentSaveInterval = interval
+        startScheduler()
+        // Rebuild the menu to update checkmarks
+        statusItem?.menu = createMenu()
+        log("Save interval changed to \(Int(interval)) seconds")
     }
 
     private func startDisplayMonitor() {
@@ -363,10 +420,44 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         restoreWindowPositions()
     }
 
+    @objc private func changeSaveInterval(_ sender: NSMenuItem) {
+        let newInterval = TimeInterval(sender.tag)
+        restartSchedulerWithInterval(newInterval)
+    }
+
+    @objc private func showHowItWorks(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "How Window Restore Works"
+        alert.informativeText = """
+        Saving:
+        • Window positions are automatically saved at your chosen interval
+        • Each save captures windows visible on the current desktop
+        • Windows from other desktops are preserved from previous saves
+        • Windows are identified by app + window title
+
+        Restoring (⌃⌘z):
+        • Only moves windows visible on your current desktop
+        • Each window is matched to its saved position by title
+        • Switch to another desktop and restore again to fix those windows
+
+        Multiple Desktops:
+        • The app remembers windows across all your desktops
+        • Visit each desktop periodically so windows get saved
+        • Restore works per-desktop — switch desktops and restore as needed
+
+        Monitor Changes:
+        • When you reconnect external monitors, restore triggers automatically
+        • Different monitor configurations are saved separately
+        """
+        alert.alertStyle = .informational
+        alert.runModal()
+    }
+
     @objc private func showAbout(_ sender: Any?) {
+        let intervalLabel = saveIntervalOptions.first { $0.seconds == currentSaveInterval }?.label ?? "\(Int(currentSaveInterval)) seconds"
         let alert = NSAlert()
         alert.messageText = "Window Restore"
-        alert.informativeText = "Automatically saves and restores window positions when external monitors are connected or disconnected.\n\nWindow positions are saved every 30 seconds."
+        alert.informativeText = "Automatically saves and restores window positions when external monitors are connected or disconnected.\n\nWindow positions are saved every \(intervalLabel)."
         alert.alertStyle = .informational
         alert.runModal()
     }
