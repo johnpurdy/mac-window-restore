@@ -7,13 +7,17 @@ let package = Package(
     platforms: [
         .macOS(.v14)
     ],
+    dependencies: [
+        .package(url: "https://github.com/sindresorhus/KeyboardShortcuts", from: "2.0.0")
+    ],
     targets: [
         .executableTarget(
-            name: "WindowRestore"
+            name: "WindowRestore",
+            dependencies: ["KeyboardShortcuts"]
         ),
         .testTarget(
             name: "WindowRestoreTests",
-            dependencies: ["WindowRestore"]
+            dependencies: ["WindowRestore", "KeyboardShortcuts"]
         ),
     ]
 )

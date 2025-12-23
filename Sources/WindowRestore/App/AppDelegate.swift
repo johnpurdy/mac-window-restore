@@ -1,4 +1,5 @@
 import AppKit
+import KeyboardShortcuts
 import ServiceManagement
 
 // Check for --dev flag
@@ -82,7 +83,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var snapshotScheduler: SnapshotScheduler?
     private var displayMonitor: DisplayMonitor?
-    private var globalHotkeyMonitor: Any?
+    private let keyboardShortcutManager = KeyboardShortcutManager()
+    private let shortcutsSettingsWindow = ShortcutsSettingsWindow()
 
     private let persistenceService = PersistenceService()
     private let displayInfoProvider = DisplayInfoProvider()
@@ -124,12 +126,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         // Check accessibility permissions
         checkAccessibilityPermissions()
 
+        // Set up keyboard shortcuts (before menu so shortcuts appear in menu)
+        setupKeyboardShortcuts()
+
         // Set up menu bar
         setupStatusItem()
         log("Menu bar setup complete")
-
-        // Set up global hotkey (Ctrl+Cmd+Z for restore)
-        setupGlobalHotkey()
 
         // Start the snapshot scheduler
         startScheduler()
@@ -145,9 +147,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     public func applicationWillTerminate(_ notification: Notification) {
         snapshotScheduler?.stop()
         displayMonitor?.stop()
-        if let monitor = globalHotkeyMonitor {
-            NSEvent.removeMonitor(monitor)
-        }
     }
 
     // MARK: - Setup
@@ -163,30 +162,25 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem?.menu = createMenu()
     }
 
-    private func setupGlobalHotkey() {
-        // Listen for Ctrl+Cmd hotkeys globally
-        globalHotkeyMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            let requiredFlags: NSEvent.ModifierFlags = [.control, .command]
-            let pressedFlags = event.modifierFlags.intersection([.control, .command, .option, .shift])
+    private func setupKeyboardShortcuts() {
+        // Set defaults first (only applies if user hasn't configured custom shortcuts)
+        keyboardShortcutManager.setDefaultShortcuts()
 
-            guard pressedFlags == requiredFlags else { return }
-
-            switch event.keyCode {
-            case 6: // keyCode 6 = 'z'
-                log("Global hotkey triggered (Ctrl+Cmd+z)")
+        keyboardShortcutManager.setupShortcuts(
+            onRestore: { [weak self] in
+                log("Keyboard shortcut triggered: restore")
                 Task { @MainActor in
                     self?.restoreWindowPositions()
                 }
-            case 1: // keyCode 1 = 's'
-                log("Global hotkey triggered (Ctrl+Cmd+s)")
+            },
+            onSave: { [weak self] in
+                log("Keyboard shortcut triggered: save")
                 Task { @MainActor in
                     self?.saveWindowPositions()
                 }
-            default:
-                break
             }
-        }
-        log("Global hotkeys registered")
+        )
+        log("Keyboard shortcuts registered")
     }
 
     private func createStatusIcon() -> NSImage {
@@ -208,16 +202,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Window Restore", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
 
+        let saveShortcutLabel = shortcutLabel(for: .saveWindows)
         let saveItem = NSMenuItem(
-            title: "Save Window Positions Now (⌃⌘S)",
+            title: "Save Window Positions Now\(saveShortcutLabel)",
             action: #selector(saveNow),
             keyEquivalent: ""
         )
         saveItem.target = self
         menu.addItem(saveItem)
 
+        let restoreShortcutLabel = shortcutLabel(for: .restoreWindows)
         let restoreItem = NSMenuItem(
-            title: "Restore Window Positions (⌃⌘z)",
+            title: "Restore Window Positions\(restoreShortcutLabel)",
             action: #selector(restoreNow),
             keyEquivalent: ""
         )
@@ -225,6 +221,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(restoreItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        // Keyboard shortcuts settings
+        let shortcutsItem = NSMenuItem(
+            title: "Keyboard Shortcuts…",
+            action: #selector(showKeyboardShortcuts),
+            keyEquivalent: ""
+        )
+        shortcutsItem.target = self
+        menu.addItem(shortcutsItem)
 
         // Save frequency submenu
         let saveFrequencyItem = NSMenuItem(title: "Save Frequency", action: nil, keyEquivalent: "")
@@ -479,10 +484,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         • Windows from other desktops are preserved from previous saves
         • Windows are identified by app + window title
 
-        Restoring (⌃⌘z):
+        Restoring:
+        • Use the keyboard shortcut or menu to restore
         • Only moves windows visible on your current desktop
         • Each window is matched to its saved position by title
         • Switch to another desktop and restore again to fix those windows
+        • Customize shortcuts via Keyboard Shortcuts… in the menu
 
         Multiple Desktops:
         • The app remembers windows across all your desktops
@@ -509,6 +516,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.informativeText = "Automatically saves and restores window positions when external monitors are connected or disconnected.\n\nWindow positions are saved every \(intervalLabel)."
         alert.alertStyle = .informational
         alert.runModal()
+    }
+
+    @objc func showKeyboardShortcuts(_ sender: Any?) {
+        shortcutsSettingsWindow.show()
+    }
+
+    private func shortcutLabel(for name: KeyboardShortcuts.Name) -> String {
+        guard let shortcut = KeyboardShortcuts.getShortcut(for: name) else {
+            return ""
+        }
+        return " (\(shortcut.description))"
     }
 
     @objc private func quit(_ sender: Any?) {

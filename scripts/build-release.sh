@@ -22,12 +22,15 @@ mkdir -p "$BUILD_DIR"
 echo "Building release binary..."
 swift build -c release
 
+# Find the binary (path varies by Swift version/architecture)
+BINARY_PATH=$(swift build -c release --show-bin-path)/$BINARY_NAME
+
 # Copy app bundle template
 echo "Creating app bundle..."
 cp -R "/Applications/$APP_NAME.app" "$APP_PATH"
 
 # Copy new binary
-cp ".build/release/$BINARY_NAME" "$APP_PATH/Contents/MacOS/$BINARY_NAME"
+cp "$BINARY_PATH" "$APP_PATH/Contents/MacOS/$BINARY_NAME"
 
 # Update version in Info.plist
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_PATH/Contents/Info.plist"

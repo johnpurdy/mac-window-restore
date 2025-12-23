@@ -8,8 +8,11 @@ BINARY_NAME="WindowRestore"
 echo "Building release..."
 swift build -c release
 
+# Find the binary (path varies by Swift version/architecture)
+BINARY_PATH=$(swift build -c release --show-bin-path)/$BINARY_NAME
+
 echo "Installing to $APP_PATH..."
-cp ".build/release/$BINARY_NAME" "$APP_PATH/Contents/MacOS/$BINARY_NAME"
+cp "$BINARY_PATH" "$APP_PATH/Contents/MacOS/$BINARY_NAME"
 
 echo "Signing with: $SIGNING_IDENTITY"
 codesign --force --deep --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH"
