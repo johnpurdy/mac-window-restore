@@ -22,97 +22,30 @@ Window Restore runs quietly in your menu bar and:
 
 ## Installation
 
-### From Source
+### Download
+
+1. Download the latest `WindowRestore-x.x.x.dmg` from [Releases](https://github.com/johnpurdy/mac-window-restore/releases)
+2. Open the DMG and drag **Window Restore** to your Applications folder
+3. Launch the app from Applications
+4. Grant Accessibility permissions when prompted:
+   - System Settings → Privacy & Security → Accessibility
+   - Enable **Window Restore**
+
+That's it! The app will appear in your menu bar.
+
+### Build from Source
 
 ```bash
 git clone https://github.com/johnpurdy/mac-window-restore.git
 cd mac-window-restore
-swift build -c release
-```
-
-Create the app bundle:
-
-```bash
-mkdir -p "Window Restore.app/Contents/MacOS"
-mkdir -p "Window Restore.app/Contents/Resources"
-cp .build/release/WindowRestore "Window Restore.app/Contents/MacOS/"
-```
-
-Create `Window Restore.app/Contents/Info.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>CFBundleIdentifier</key>
-    <string>com.windowrestore.app</string>
-    <key>CFBundleName</key>
-    <string>Window Restore</string>
-    <key>CFBundleDisplayName</key>
-    <string>Window Restore</string>
-    <key>CFBundleExecutable</key>
-    <string>WindowRestore</string>
-    <key>CFBundlePackageType</key>
-    <string>APPL</string>
-    <key>CFBundleVersion</key>
-    <string>1.0</string>
-    <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
-    <key>LSMinimumSystemVersion</key>
-    <string>14.0</string>
-    <key>LSUIElement</key>
-    <true/>
-    <key>NSHighResolutionCapable</key>
-    <true/>
-</dict>
-</plist>
-```
-
-Move to Applications and sign:
-
-```bash
-mv "Window Restore.app" /Applications/
-codesign --force --deep --options runtime --sign "Developer ID Application: Your Name (TEAMID)" "/Applications/Window Restore.app"
-```
-
-> **Note:** Signing with a Developer ID ensures accessibility permissions persist across app updates. Without proper signing, you'll need to re-grant permissions after each update.
-
-### Updating
-
-After making changes, use the build script:
-
-```bash
 ./scripts/build-and-install.sh
 ```
 
-This builds, installs, and signs the app in one step.
-
-### Generate App Icon (Optional)
-
-```bash
-swift generate-icon.swift
-iconutil -c icns AppIcon.iconset -o "/Applications/Window Restore.app/Contents/Resources/AppIcon.icns"
-```
-
-Add to Info.plist:
-```xml
-<key>CFBundleIconFile</key>
-<string>AppIcon</string>
-```
+This builds, signs, and installs to `/Applications/Window Restore.app`.
 
 ## Usage
 
-1. Launch the app:
-   ```bash
-   open "/Applications/Window Restore.app"
-   ```
-
-2. Grant Accessibility permissions when prompted:
-   - System Settings → Privacy & Security → Accessibility
-   - Enable "Window Restore"
-
-3. The app runs in your menu bar with these options:
+The app runs in your menu bar with these options:
 
 | Menu Item | Description |
 |-----------|-------------|
