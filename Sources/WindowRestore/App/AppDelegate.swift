@@ -69,6 +69,10 @@ private let saveIntervalOptions: [(label: String, seconds: TimeInterval)] = [
 private let staleThresholdKey = "StaleWindowThresholdDays"
 private let defaultStaleThresholdDays: Int = 7
 
+// UserDefaults keys for auto-restore on monitor change
+private let restoreOnConnectKey = "RestoreOnConnectEnabled"
+private let restoreOnDisconnectKey = "RestoreOnDisconnectEnabled"
+
 // Available stale window thresholds (in days)
 private let staleThresholdOptions: [(label: String, days: Int)] = [
     ("1 day", 1),
@@ -90,6 +94,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let displayInfoProvider = DisplayInfoProvider()
     private let windowEnumerator: WindowEnumerator
     private let windowPositioner = WindowPositioner()
+
+    private var isSavingPaused: Bool = false
 
     private var currentSaveInterval: TimeInterval {
         get {
@@ -113,6 +119,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var currentStaleThreshold: TimeInterval {
         TimeInterval(currentStaleThresholdDays) * 24 * 3600
+    }
+
+    private var isRestoreOnConnectEnabled: Bool {
+        get {
+            // Default to true if not set
+            if UserDefaults.standard.object(forKey: restoreOnConnectKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: restoreOnConnectKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: restoreOnConnectKey)
+        }
+    }
+
+    private var isRestoreOnDisconnectEnabled: Bool {
+        get {
+            // Default to true if not set
+            if UserDefaults.standard.object(forKey: restoreOnDisconnectKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: restoreOnDisconnectKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: restoreOnDisconnectKey)
+        }
     }
 
     override public init() {
@@ -211,6 +243,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         saveItem.target = self
         menu.addItem(saveItem)
 
+        let pauseSavingItem = NSMenuItem(
+            title: "Pause Saving",
+            action: #selector(togglePauseSaving),
+            keyEquivalent: ""
+        )
+        pauseSavingItem.target = self
+        pauseSavingItem.state = isSavingPaused ? .on : .off
+        menu.addItem(pauseSavingItem)
+
+        menu.addItem(NSMenuItem.separator())
+
         let restoreShortcutLabel = shortcutLabel(for: .restoreWindows)
         let restoreItem = NSMenuItem(
             title: "Restore Window Positions\(restoreShortcutLabel)",
@@ -219,6 +262,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         restoreItem.target = self
         menu.addItem(restoreItem)
+
+        let autoRestoreItem = NSMenuItem(title: "Auto-restore on Monitor Change", action: nil, keyEquivalent: "")
+        let autoRestoreSubmenu = NSMenu()
+
+        let onConnectItem = NSMenuItem(
+            title: "On Connect",
+            action: #selector(toggleRestoreOnConnect),
+            keyEquivalent: ""
+        )
+        onConnectItem.target = self
+        onConnectItem.state = isRestoreOnConnectEnabled ? .on : .off
+        autoRestoreSubmenu.addItem(onConnectItem)
+
+        let onDisconnectItem = NSMenuItem(
+            title: "On Disconnect",
+            action: #selector(toggleRestoreOnDisconnect),
+            keyEquivalent: ""
+        )
+        onDisconnectItem.target = self
+        onDisconnectItem.state = isRestoreOnDisconnectEnabled ? .on : .off
+        autoRestoreSubmenu.addItem(onDisconnectItem)
+
+        autoRestoreItem.submenu = autoRestoreSubmenu
+        menu.addItem(autoRestoreItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -264,6 +331,16 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         keepWindowsItem.submenu = keepWindowsSubmenu
         menu.addItem(keepWindowsItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let clearAllItem = NSMenuItem(
+            title: "Clear All Window Positions…",
+            action: #selector(clearAllWindowPositions),
+            keyEquivalent: ""
+        )
+        clearAllItem.target = self
+        menu.addItem(clearAllItem)
 
         let launchAtLoginItem = NSMenuItem(
             title: "Launch at Login",
@@ -332,8 +409,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     guard let self = self else { return }
 
-                    // If monitors were added (newCount > oldCount), restore windows
-                    if newCount > oldCount {
+                    // Restore on monitor connect
+                    if newCount > oldCount && self.isRestoreOnConnectEnabled {
+                        try? await Task.sleep(for: .seconds(1))
+                        self.restoreWindowPositions()
+                    }
+
+                    // Restore on monitor disconnect
+                    if newCount < oldCount && self.isRestoreOnDisconnectEnabled {
                         try? await Task.sleep(for: .seconds(1))
                         self.restoreWindowPositions()
                     }
@@ -474,12 +557,57 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         log("Stale threshold changed to \(sender.tag) days")
     }
 
+    @objc func togglePauseSaving(_ sender: NSMenuItem) {
+        isSavingPaused.toggle()
+        if isSavingPaused {
+            snapshotScheduler?.stop()
+            sender.state = .on
+            log("Saving paused")
+        } else {
+            snapshotScheduler?.start()
+            sender.state = .off
+            log("Saving resumed")
+        }
+    }
+
+    @objc func toggleRestoreOnConnect(_ sender: NSMenuItem) {
+        isRestoreOnConnectEnabled.toggle()
+        sender.state = isRestoreOnConnectEnabled ? .on : .off
+        log("Restore on monitor connect: \(isRestoreOnConnectEnabled ? "enabled" : "disabled")")
+    }
+
+    @objc func toggleRestoreOnDisconnect(_ sender: NSMenuItem) {
+        isRestoreOnDisconnectEnabled.toggle()
+        sender.state = isRestoreOnDisconnectEnabled ? .on : .off
+        log("Restore on monitor disconnect: \(isRestoreOnDisconnectEnabled ? "enabled" : "disabled")")
+    }
+
+    @objc func clearAllWindowPositions(_ sender: Any?) {
+        let alert = NSAlert()
+        alert.messageText = "Clear All Window Positions?"
+        alert.informativeText = "This will delete all saved window positions for all monitor configurations. This cannot be undone."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Clear All")
+        alert.addButton(withTitle: "Cancel")
+
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            do {
+                try persistenceService.deleteAllConfigurations()
+                log("All window positions cleared")
+            } catch {
+                log("Failed to clear window positions: \(error.localizedDescription)")
+            }
+        }
+    }
+
     @objc private func showHowItWorks(_ sender: Any?) {
         let alert = NSAlert()
         alert.messageText = "How Window Restore Works"
         alert.informativeText = """
         Saving:
         • Window positions are automatically saved at your chosen interval
+        • Use "Pause Saving" to temporarily stop auto-saving
         • Each save captures windows visible on the current desktop
         • Windows from other desktops are preserved from previous saves
         • Windows are identified by app + window title
@@ -497,13 +625,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         • Restore works per-desktop — switch desktops and restore as needed
 
         Monitor Changes:
-        • When you reconnect external monitors, restore triggers automatically
+        • Restore triggers automatically when monitors connect or disconnect
+        • Toggle each via "Auto-restore on Monitor Change" submenu
         • Different monitor configurations are saved separately
 
         Cleanup:
         • Windows not seen within the "Keep Windows For" period are removed
         • This prevents the saved data from growing indefinitely
         • Adjust the threshold via the menu (default: 7 days)
+        • Use "Clear All Window Positions…" to start fresh
         """
         alert.alertStyle = .informational
         alert.runModal()

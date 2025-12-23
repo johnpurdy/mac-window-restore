@@ -68,10 +68,13 @@ Sources/WindowRestore/
 | Feature | Implementation |
 |---------|----------------|
 | Auto-save | `SnapshotScheduler` with configurable interval (UserDefaults) |
-| Auto-restore | `DisplayMonitor` triggers on monitor reconnect |
+| Pause Saving | Stops `SnapshotScheduler`, session-only (not persisted) |
+| Auto-restore | `DisplayMonitor` triggers on monitor connect/disconnect |
+| Auto-restore toggles | UserDefaults `RestoreOnConnectEnabled` and `RestoreOnDisconnectEnabled`, both default true |
 | Keyboard shortcuts | Configurable via `KeyboardShortcutManager` using KeyboardShortcuts library |
 | Save Frequency menu | 15s, 30s, 1min, 2min, 5min options |
 | Keep Windows For menu | 1, 3, 7, 14, 30 day stale threshold |
+| Clear All Positions | `PersistenceService.deleteAllConfigurations()` with confirmation dialog |
 | Launch at Login | `SMAppService.mainApp` (macOS 13+) |
 | Multi-desktop support | Merge preserves windows from other desktops |
 | Stale cleanup | `WindowMerger` filters by `lastSeenAt` timestamp |

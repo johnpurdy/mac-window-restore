@@ -11,7 +11,7 @@ macOS doesn't reliably remember window positions when you disconnect and reconne
 Window Restore runs quietly in your menu bar and:
 
 - **Auto-saves** window positions at a configurable interval (default: 30 seconds)
-- **Auto-restores** windows when monitors reconnect
+- **Auto-restores** windows when monitors connect or disconnect
 - **Remembers** different configurations for different monitor setups
 - **Cleans up** stale windows that haven't been seen in a configurable period
 
@@ -50,10 +50,13 @@ The app runs in your menu bar with these options:
 | Menu Item | Description |
 |-----------|-------------|
 | Save Window Positions Now | Manually save current positions |
+| Pause Saving | Temporarily stop auto-saving (session only) |
 | Restore Window Positions | Manually restore positions |
+| Auto-restore on Monitor Change | Submenu: On Connect / On Disconnect |
 | Keyboard Shortcuts… | Customize save/restore keyboard shortcuts |
 | Save Frequency | Choose save interval: 15s, 30s, 1min, 2min, 5min |
 | Keep Windows For | Choose cleanup threshold: 1, 3, 7, 14, 30 days |
+| Clear All Window Positions… | Delete all saved positions (with confirmation) |
 | Launch at Login | Start automatically on login |
 | How It Works… | Detailed explanation of app behavior |
 | About Window Restore | App information |
@@ -86,7 +89,8 @@ Open **Keyboard Shortcuts…** from the menu to customize these.
 - Restore works per-desktop — switch desktops and restore as needed
 
 ### Monitor Changes
-- When you reconnect external monitors, restore triggers automatically
+- Restore triggers automatically when monitors connect or disconnect
+- Both can be individually toggled via "Auto-restore on Monitor Change" submenu
 - Different monitor configurations are saved separately
 
 ### Cleanup

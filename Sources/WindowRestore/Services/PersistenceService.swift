@@ -63,6 +63,21 @@ public final class PersistenceService: Sendable {
             .map { $0.deletingPathExtension().lastPathComponent }
     }
 
+    public func deleteAllConfigurations() throws {
+        guard FileManager.default.fileExists(atPath: storageDirectory.path) else {
+            return
+        }
+
+        let contents = try FileManager.default.contentsOfDirectory(
+            at: storageDirectory,
+            includingPropertiesForKeys: nil
+        )
+
+        for file in contents where file.pathExtension == "json" {
+            try FileManager.default.removeItem(at: file)
+        }
+    }
+
     private func ensureDirectoryExists() throws {
         if !FileManager.default.fileExists(atPath: storageDirectory.path) {
             try FileManager.default.createDirectory(
