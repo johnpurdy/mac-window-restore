@@ -21,7 +21,7 @@ swift test
 
 # Manual install with Developer ID signing
 swift build -c release && \
-cp .build/release/WindowRestore "/Applications/Window Restore.app/Contents/MacOS/" && \
+cp "$(swift build -c release --show-bin-path)/WindowRestore" "/Applications/Window Restore.app/Contents/MacOS/" && \
 codesign --force --deep --options runtime --sign "Developer ID Application: John Purdy (2U3X822638)" "/Applications/Window Restore.app"
 
 # Run in dev mode (with logging)
@@ -48,6 +48,7 @@ Sources/WindowRestore/
 | `PersistenceService` | JSON storage to ~/Library/Application Support/WindowRestore/ |
 | `SnapshotScheduler` | Configurable save timer (15s, 30s, 1min, 2min, 5min) |
 | `RestoreCoordinator` | Orchestrates the restore flow |
+| `KeyboardShortcutManager` | Registers shortcuts via KeyboardShortcuts library |
 
 ### Data Flow
 
@@ -68,7 +69,7 @@ Sources/WindowRestore/
 |---------|----------------|
 | Auto-save | `SnapshotScheduler` with configurable interval (UserDefaults) |
 | Auto-restore | `DisplayMonitor` triggers on monitor reconnect |
-| Global hotkey | ⌃⌘Z registered in `AppDelegate.setupGlobalHotkey()` |
+| Keyboard shortcuts | Configurable via `KeyboardShortcutManager` using KeyboardShortcuts library |
 | Save Frequency menu | 15s, 30s, 1min, 2min, 5min options |
 | Keep Windows For menu | 1, 3, 7, 14, 30 day stale threshold |
 | Launch at Login | `SMAppService.mainApp` (macOS 13+) |
@@ -103,7 +104,7 @@ Sources/WindowRestore/
 |-----|---------|
 | `CGWindowListCopyWindowInfo` | Enumerate visible windows |
 | `AXUIElement` | Get window titles, move/resize windows |
-| `NSEvent.addGlobalMonitorForEvents` | Global hotkey (⌃⌘Z) |
+| `KeyboardShortcuts` (library) | Configurable global hotkeys |
 | `NSApplication.didChangeScreenParametersNotification` | Detect monitor changes |
 | `CGDirectDisplay` | Get display properties |
 | `SMAppService` | Launch at login (macOS 13+) |

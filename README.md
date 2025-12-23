@@ -50,7 +50,8 @@ The app runs in your menu bar with these options:
 | Menu Item | Description |
 |-----------|-------------|
 | Save Window Positions Now | Manually save current positions |
-| Restore Window Positions (⌃⌘Z) | Manually restore positions |
+| Restore Window Positions | Manually restore positions |
+| Keyboard Shortcuts… | Customize save/restore keyboard shortcuts |
 | Save Frequency | Choose save interval: 15s, 30s, 1min, 2min, 5min |
 | Keep Windows For | Choose cleanup threshold: 1, 3, 7, 14, 30 days |
 | Launch at Login | Start automatically on login |
@@ -58,9 +59,13 @@ The app runs in your menu bar with these options:
 | About Window Restore | App information |
 | Quit | Exit the app |
 
-### Global Hotkey
+### Keyboard Shortcuts
 
-Press **⌃⌘Z** (Control + Command + Z) anywhere to restore window positions.
+Default shortcuts (customizable via menu):
+- **⌃⌘Z** (Control + Command + Z) — Restore window positions
+- **⌃⌘S** (Control + Command + S) — Save window positions
+
+Open **Keyboard Shortcuts…** from the menu to customize these.
 
 ## How It Works
 
@@ -121,8 +126,11 @@ Logs are written to `~/Library/Application Support/WindowRestore/app.log`
 ```
 Sources/WindowRestore/
 ├── App/
-│   ├── WindowRestoreApp.swift    # Entry point
-│   └── AppDelegate.swift         # Menu bar, hotkey, scheduling
+│   ├── WindowRestoreApp.swift       # Entry point
+│   ├── AppDelegate.swift            # Menu bar, scheduling
+│   ├── KeyboardShortcutManager.swift # Shortcut registration
+│   ├── KeyboardShortcutNames.swift  # Shortcut name definitions
+│   └── ShortcutsSettingsWindow.swift # Settings UI
 ├── Models/
 │   ├── WindowSnapshot.swift      # Window state with timestamp
 │   ├── DisplayInfo.swift         # Monitor info
