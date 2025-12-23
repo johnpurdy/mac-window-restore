@@ -188,4 +188,22 @@ struct PersistenceServiceTests {
         #expect(identifiers.contains("config-b"))
         #expect(identifiers.contains("config-c"))
     }
+
+    @Test("PersistenceService saves files with owner-only permissions (0600)")
+    func savesWithRestrictivePermissions() throws {
+        let temporaryDirectory = try createTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: temporaryDirectory) }
+
+        let service = PersistenceService(storageDirectory: temporaryDirectory)
+        let configuration = createTestConfiguration(identifier: "permissions-test")
+
+        try service.save(configuration: configuration)
+
+        let filePath = temporaryDirectory.appendingPathComponent("permissions-test.json")
+        let attributes = try FileManager.default.attributesOfItem(atPath: filePath.path)
+        let permissions = attributes[.posixPermissions] as? Int
+
+        // 0o600 = 384 in decimal (owner read/write only)
+        #expect(permissions == 0o600, "File should have owner-only permissions (0600)")
+    }
 }

@@ -1,9 +1,21 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 SIGNING_IDENTITY="Developer ID Application: John Purdy (2U3X822638)"
 APP_PATH="/Applications/Window Restore.app"
 BINARY_NAME="WindowRestore"
+
+# Verify app bundle exists
+if [[ ! -d "$APP_PATH" ]]; then
+    echo "Error: App bundle not found at $APP_PATH"
+    echo "Please install the app first before using this script."
+    exit 1
+fi
+
+if [[ ! -d "$APP_PATH/Contents/MacOS" ]]; then
+    echo "Error: Invalid app bundle structure at $APP_PATH"
+    exit 1
+fi
 
 echo "Building release..."
 swift build -c release

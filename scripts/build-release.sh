@@ -1,5 +1,5 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
 VERSION="${1:-1.0.0}"
 SIGNING_IDENTITY="Developer ID Application: John Purdy (2U3X822638)"
@@ -11,8 +11,21 @@ BUNDLE_ID="com.windowrestore.app"
 BUILD_DIR=".build/release-package"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
 DMG_PATH=".build/WindowRestore-$VERSION.dmg"
+TEMPLATE_APP="/Applications/$APP_NAME.app"
 
 echo "=== Building Window Restore v$VERSION ==="
+
+# Verify template app bundle exists
+if [[ ! -d "$TEMPLATE_APP" ]]; then
+    echo "Error: Template app bundle not found at $TEMPLATE_APP"
+    echo "Please install the app first before creating a release."
+    exit 1
+fi
+
+if [[ ! -f "$TEMPLATE_APP/Contents/Info.plist" ]]; then
+    echo "Error: Invalid app bundle structure - missing Info.plist"
+    exit 1
+fi
 
 # Clean and create build directory
 rm -rf "$BUILD_DIR"
@@ -25,9 +38,14 @@ swift build -c release
 # Find the binary (path varies by Swift version/architecture)
 BINARY_PATH=$(swift build -c release --show-bin-path)/$BINARY_NAME
 
+if [[ ! -f "$BINARY_PATH" ]]; then
+    echo "Error: Build failed - binary not found at $BINARY_PATH"
+    exit 1
+fi
+
 # Copy app bundle template
 echo "Creating app bundle..."
-cp -R "/Applications/$APP_NAME.app" "$APP_PATH"
+cp -R "$TEMPLATE_APP" "$APP_PATH"
 
 # Copy new binary
 cp "$BINARY_PATH" "$APP_PATH/Contents/MacOS/$BINARY_NAME"

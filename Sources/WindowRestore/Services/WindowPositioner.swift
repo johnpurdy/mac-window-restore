@@ -77,14 +77,16 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             var positionRef: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef)
             var position = CGPoint.zero
-            if let positionValue = positionRef {
+            if let positionValue = positionRef,
+               CFGetTypeID(positionValue) == AXValueGetTypeID() {
                 AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
             }
 
             var sizeRef: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
             var size = CGSize.zero
-            if let sizeValue = sizeRef {
+            if let sizeValue = sizeRef,
+               CFGetTypeID(sizeValue) == AXValueGetTypeID() {
                 AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
             }
 

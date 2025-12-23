@@ -29,6 +29,10 @@ public final class PersistenceService: Sendable {
         let filePath = storageDirectory
             .appendingPathComponent("\(configuration.identifier).json")
         try data.write(to: filePath)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o600],
+            ofItemAtPath: filePath.path
+        )
     }
 
     public func load(identifier: String) throws -> DisplayConfiguration? {
