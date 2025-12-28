@@ -92,7 +92,8 @@ Sources/WindowRestore/
 
 - Protocols for testability (`WindowEnumerating`, `WindowPositioning`, `DisplayInfoProviding`)
 - Dependency injection via initializers
-- No singletons (except `FileLogger` for dev mode)
+- No singletons
+- Logging via `os.Logger` (viewable in Console.app, subsystem: `com.windowrestore.app`)
 
 ### Testing
 
