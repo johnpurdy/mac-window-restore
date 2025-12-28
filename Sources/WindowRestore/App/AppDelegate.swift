@@ -627,29 +627,20 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func viewLogsInConsole(_ sender: Any?) {
-        let script = """
-        tell application "Console"
-            activate
-        end tell
-        delay 0.5
-        tell application "System Events"
-            tell process "Console"
-                keystroke "f" using {option down, command down}
-                delay 0.2
-                keystroke "subsystem:com.windowrestore.app"
-                delay 0.1
-                keystroke return
-            end tell
-        end tell
-        """
+        // Copy filter to clipboard
+        let filter = "subsystem:com.windowrestore.app"
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(filter, forType: .string)
 
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
-            if let error = error {
-                AppLogger.log("Failed to open Console: \(error)", level: .error)
-            }
-        }
+        // Open Console.app
+        NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Console.app"))
+
+        // Show instructions
+        let alert = NSAlert()
+        alert.messageText = "Filter Copied to Clipboard"
+        alert.informativeText = "Console.app is opening. Press ⌥⌘F (Option+Command+F) to open the search field, then ⌘V to paste the filter.\n\nFilter: \(filter)"
+        alert.alertStyle = .informational
+        alert.runModal()
     }
 
     @objc private func showAbout(_ sender: Any?) {
