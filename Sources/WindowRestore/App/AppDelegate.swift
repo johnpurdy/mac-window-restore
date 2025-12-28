@@ -340,6 +340,14 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         howItWorksItem.target = self
         menu.addItem(howItWorksItem)
 
+        let viewLogsItem = NSMenuItem(
+            title: "View Logs in Console…",
+            action: #selector(viewLogsInConsole),
+            keyEquivalent: ""
+        )
+        viewLogsItem.target = self
+        menu.addItem(viewLogsItem)
+
         let aboutItem = NSMenuItem(
             title: "About Window Restore",
             action: #selector(showAbout),
@@ -616,6 +624,32 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         """
         alert.alertStyle = .informational
         alert.runModal()
+    }
+
+    @objc private func viewLogsInConsole(_ sender: Any?) {
+        let script = """
+        tell application "Console"
+            activate
+        end tell
+        delay 0.5
+        tell application "System Events"
+            tell process "Console"
+                keystroke "f" using {option down, command down}
+                delay 0.2
+                keystroke "subsystem:com.windowrestore.app"
+                delay 0.1
+                keystroke return
+            end tell
+        end tell
+        """
+
+        if let appleScript = NSAppleScript(source: script) {
+            var error: NSDictionary?
+            appleScript.executeAndReturnError(&error)
+            if let error = error {
+                AppLogger.log("Failed to open Console: \(error)", level: .error)
+            }
+        }
     }
 
     @objc private func showAbout(_ sender: Any?) {
