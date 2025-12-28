@@ -59,6 +59,7 @@ The app runs in your menu bar with these options:
 | Clear All Window Positions… | Delete all saved positions (with confirmation) |
 | Launch at Login | Start automatically on login |
 | How It Works… | Detailed explanation of app behavior |
+| View Logs in Console… | Open Console.app with filter applied |
 | About Window Restore | App information |
 | Quit | Exit the app |
 
