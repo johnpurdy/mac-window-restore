@@ -1,55 +1,34 @@
 import AppKit
 import KeyboardShortcuts
 import ServiceManagement
+import os
 
 // Check for --dev flag
 let devMode = CommandLine.arguments.contains("--dev")
 
-// Simple file logger (only active in dev mode)
-final class FileLogger: @unchecked Sendable {
-    static let shared = FileLogger()
-    private let logURL: URL?
-    private let lock = NSLock()
+// Unified logging using os_log (viewable in Console.app)
+enum AppLogger {
+    static let subsystem = "com.windowrestore.app"
 
-    private init() {
-        guard devMode else {
-            logURL = nil
-            return
-        }
+    static let general = Logger(subsystem: subsystem, category: "general")
+    static let save = Logger(subsystem: subsystem, category: "save")
+    static let restore = Logger(subsystem: subsystem, category: "restore")
+    static let monitor = Logger(subsystem: subsystem, category: "monitor")
+    static let accessibility = Logger(subsystem: subsystem, category: "accessibility")
 
-        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let logDir = appSupport.appendingPathComponent("WindowRestore")
-        try? FileManager.default.createDirectory(at: logDir, withIntermediateDirectories: true)
-        logURL = logDir.appendingPathComponent("app.log")
+    static func log(_ message: String, category: Logger = general, level: OSLogType = .info) {
+        category.log(level: level, "\(message)")
 
-        // Clear old log on startup
-        if let url = logURL {
-            try? "".write(to: url, atomically: true, encoding: .utf8)
-        }
-    }
-
-    func log(_ message: String) {
-        guard devMode, let logURL = logURL else { return }
-
-        lock.lock()
-        defer { lock.unlock() }
-
-        let timestamp = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(timestamp)] \(message)\n"
-        print(line, terminator: "")
-
-        if let handle = try? FileHandle(forWritingTo: logURL) {
-            handle.seekToEndOfFile()
-            handle.write(line.data(using: .utf8)!)
-            handle.closeFile()
-        } else {
-            try? line.write(to: logURL, atomically: false, encoding: .utf8)
+        // Also print to stdout in dev mode for convenience
+        if devMode {
+            let timestamp = ISO8601DateFormatter().string(from: Date())
+            print("[\(timestamp)] \(message)")
         }
     }
 }
 
 private func log(_ message: String) {
-    FileLogger.shared.log(message)
+    AppLogger.log(message)
 }
 
 // UserDefaults key for save interval
