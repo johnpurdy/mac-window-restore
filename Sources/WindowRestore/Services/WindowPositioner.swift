@@ -2,6 +2,9 @@ import Foundation
 import CoreGraphics
 import AppKit
 import ApplicationServices
+import os
+
+private let logger = Logger(subsystem: "com.windowrestore.app", category: "restore")
 
 public struct WindowRestoreResult: Sendable {
     public let snapshot: WindowSnapshot
@@ -111,6 +114,7 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
 
             if let (snapshotIndex, snapshot) = matchResult {
                 usedSnapshotIndices.insert(snapshotIndex)
+                logger.info("Matched: \"\(currentWindow.title)\" current=(\(Int(currentWindow.frame.origin.x)),\(Int(currentWindow.frame.origin.y)) \(Int(currentWindow.frame.width))x\(Int(currentWindow.frame.height))) -> target=(\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
                 let restoreResult = positionWindow(window: currentWindow.element, snapshot: snapshot)
                 results.append(restoreResult)
             }
@@ -153,6 +157,11 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
         }
 
         let success = positionResult == .success && sizeResult == .success
+        if success {
+            logger.info("Positioned: \"\(snapshot.windowTitle)\" to (\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
+        } else {
+            logger.error("Failed to position: \"\(snapshot.windowTitle)\" posErr=\(positionResult.rawValue) sizeErr=\(sizeResult.rawValue)")
+        }
         return WindowRestoreResult(
             snapshot: snapshot,
             success: success,
