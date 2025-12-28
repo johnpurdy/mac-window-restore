@@ -55,6 +55,11 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                 cache: &axWindowCache
             )
 
+            // Skip windows with empty titles - can't reliably match them on restore
+            if windowTitle.isEmpty {
+                return nil
+            }
+
             // Find which display this window is on
             let displayIdentifier = findDisplayForWindow(frame: frame, displays: displays)
 
