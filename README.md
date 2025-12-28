@@ -59,6 +59,7 @@ The app runs in your menu bar with these options:
 | Clear All Window Positions… | Delete all saved positions (with confirmation) |
 | Launch at Login | Start automatically on login |
 | How It Works… | Detailed explanation of app behavior |
+| View Logs in Console… | Open Console.app with filter applied |
 | About Window Restore | App information |
 | Quit | Exit the app |
 
@@ -117,13 +118,21 @@ swift test
 
 ### Dev Mode
 
-Run with logging enabled:
+Run with verbose logging to stdout:
 
 ```bash
 .build/debug/WindowRestore --dev
 ```
 
-Logs are written to `~/Library/Application Support/WindowRestore/app.log`
+### Viewing Logs
+
+The app logs to the macOS unified logging system. View logs in Console.app:
+
+1. Open **Console.app**
+2. Select your Mac in the sidebar
+3. Filter by: `subsystem:com.windowrestore.app`
+
+Categories: `general`, `save`, `restore`, `monitor`, `accessibility`
 
 ## Architecture
 

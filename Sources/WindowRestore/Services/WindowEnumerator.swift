@@ -2,6 +2,9 @@ import Foundation
 import CoreGraphics
 import AppKit
 import ApplicationServices
+import os
+
+private let logger = Logger(subsystem: "com.windowrestore.app", category: "accessibility")
 
 public protocol WindowEnumerating: Sendable {
     func enumerateWindows() -> [WindowSnapshot]
@@ -55,6 +58,11 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                 cache: &axWindowCache
             )
 
+            // Skip windows with empty titles - can't reliably match them on restore
+            if windowTitle.isEmpty {
+                return nil
+            }
+
             // Find which display this window is on
             let displayIdentifier = findDisplayForWindow(frame: frame, displays: displays)
 
@@ -105,7 +113,7 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
         guard result == .success,
               let windows = windowsRef as? [AXUIElement] else {
             if result != .success {
-                FileLogger.shared.log("AX error for PID \(pid): \(result.rawValue)")
+                logger.debug("AX error for PID \(pid): \(result.rawValue)")
             }
             return []
         }

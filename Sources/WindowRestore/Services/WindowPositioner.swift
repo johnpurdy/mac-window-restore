@@ -2,6 +2,9 @@ import Foundation
 import CoreGraphics
 import AppKit
 import ApplicationServices
+import os
+
+private let logger = Logger(subsystem: "com.windowrestore.app", category: "restore")
 
 public struct WindowRestoreResult: Sendable {
     public let snapshot: WindowSnapshot
@@ -111,6 +114,7 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
 
             if let (snapshotIndex, snapshot) = matchResult {
                 usedSnapshotIndices.insert(snapshotIndex)
+                logger.info("Matched: \"\(currentWindow.title)\" current=(\(Int(currentWindow.frame.origin.x)),\(Int(currentWindow.frame.origin.y)) \(Int(currentWindow.frame.width))x\(Int(currentWindow.frame.height))) -> target=(\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
                 let restoreResult = positionWindow(window: currentWindow.element, snapshot: snapshot)
                 results.append(restoreResult)
             }
@@ -125,7 +129,7 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
         snapshots: [WindowSnapshot],
         excludedIndices: Set<Int>
     ) -> (Int, WindowSnapshot)? {
-        // First, try to find an exact title match
+        // Match by exact title only - windows without titles are not saved
         for (index, snapshot) in snapshots.enumerated() {
             if excludedIndices.contains(index) { continue }
 
@@ -134,40 +138,7 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             }
         }
 
-        // If no title match, find the snapshot with the closest saved position
-        // to this window's current position
-        var bestMatch: (index: Int, snapshot: WindowSnapshot, distance: CGFloat)?
-
-        for (index, snapshot) in snapshots.enumerated() {
-            if excludedIndices.contains(index) { continue }
-
-            // Only consider snapshots with empty titles for position-based matching
-            // (titled snapshots should match by title)
-            if !snapshot.windowTitle.isEmpty { continue }
-
-            let distance = distanceBetweenFrames(currentWindow.frame, snapshot.frame)
-
-            if bestMatch == nil || distance < bestMatch!.distance {
-                bestMatch = (index, snapshot, distance)
-            }
-        }
-
-        if let match = bestMatch {
-            return (match.index, match.snapshot)
-        }
-
         return nil
-    }
-
-    private func distanceBetweenFrames(_ frame1: CGRect, _ frame2: CGRect) -> CGFloat {
-        // Use center-to-center distance
-        let center1 = CGPoint(x: frame1.midX, y: frame1.midY)
-        let center2 = CGPoint(x: frame2.midX, y: frame2.midY)
-
-        let deltaX = center1.x - center2.x
-        let deltaY = center1.y - center2.y
-
-        return sqrt(deltaX * deltaX + deltaY * deltaY)
     }
 
     private func positionWindow(window: AXUIElement, snapshot: WindowSnapshot) -> WindowRestoreResult {
@@ -186,6 +157,11 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
         }
 
         let success = positionResult == .success && sizeResult == .success
+        if success {
+            logger.info("Positioned: \"\(snapshot.windowTitle)\" to (\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
+        } else {
+            logger.error("Failed to position: \"\(snapshot.windowTitle)\" posErr=\(positionResult.rawValue) sizeErr=\(sizeResult.rawValue)")
+        }
         return WindowRestoreResult(
             snapshot: snapshot,
             success: success,
