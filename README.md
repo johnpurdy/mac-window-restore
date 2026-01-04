@@ -49,15 +49,20 @@ The app runs in your menu bar with these options:
 
 | Menu Item | Description |
 |-----------|-------------|
+| **Primary Actions** | |
 | Save Window Positions Now | Manually save current positions |
-| Pause Saving | Temporarily stop auto-saving (session only) |
 | Restore Window Positions | Manually restore positions |
-| Auto-restore on Monitor Change | Submenu: On Connect / On Disconnect |
-| Keyboard Shortcuts… | Customize save/restore keyboard shortcuts |
+| **Saving Options** | |
+| Pause Saving | Temporarily stop auto-saving (session only) |
 | Save Frequency | Choose save interval: 15s, 30s, 1min, 2min, 5min |
+| Auto-restore on Monitor Change | Submenu: On Connect / On Disconnect |
+| **Data Management** | |
 | Keep Windows For | Choose cleanup threshold: 1, 3, 7, 14, 30 days |
 | Clear All Window Positions… | Delete all saved positions (with confirmation) |
+| **App Settings** | |
+| Keyboard Shortcuts… | Customize save/restore keyboard shortcuts |
 | Launch at Login | Start automatically on login |
+| **Help & Info** | |
 | How It Works… | Detailed explanation of app behavior |
 | View Logs in Console… | Open Console.app with filter applied |
 | About Window Restore | App information |
@@ -77,11 +82,11 @@ Open **Keyboard Shortcuts…** from the menu to customize these.
 - Window positions are automatically saved at your chosen interval
 - Each save captures windows visible on the current desktop
 - Windows from other desktops are preserved from previous saves
-- Windows are identified by app bundle ID + window title
 
 ### Restoring
 - Only moves windows visible on your current desktop
-- Each window is matched to its saved position by title
+- Windows are matched first by title, then by position (within same app)
+- Position fallback handles browser tabs changing titles between save/restore
 - Switch to another desktop and restore again to fix those windows
 
 ### Multiple Desktops
@@ -151,6 +156,7 @@ Sources/WindowRestore/
 └── Services/
     ├── WindowEnumerator.swift    # Get all windows via Accessibility API
     ├── WindowPositioner.swift    # Move windows
+    ├── WindowMatcher.swift       # Title + position-based matching
     ├── WindowMerger.swift        # Merge & prune stale windows
     ├── DisplayMonitor.swift      # Detect monitor changes
     ├── DisplayInfoProvider.swift # Get monitor info

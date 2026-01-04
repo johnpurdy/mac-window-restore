@@ -213,6 +213,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Window Restore", action: nil, keyEquivalent: ""))
         menu.addItem(NSMenuItem.separator())
 
+        // MARK: - Primary Actions
+
         let saveShortcutLabel = shortcutLabel(for: .saveWindows)
         let saveItem = NSMenuItem(
             title: "Save Window Positions Now\(saveShortcutLabel)",
@@ -221,6 +223,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         saveItem.target = self
         menu.addItem(saveItem)
+
+        let restoreShortcutLabel = shortcutLabel(for: .restoreWindows)
+        let restoreItem = NSMenuItem(
+            title: "Restore Window Positions\(restoreShortcutLabel)",
+            action: #selector(restoreNow),
+            keyEquivalent: ""
+        )
+        restoreItem.target = self
+        menu.addItem(restoreItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // MARK: - Saving Options
 
         let pauseSavingItem = NSMenuItem(
             title: "Pause Saving",
@@ -231,16 +246,21 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         pauseSavingItem.state = isSavingPaused ? .on : .off
         menu.addItem(pauseSavingItem)
 
-        menu.addItem(NSMenuItem.separator())
-
-        let restoreShortcutLabel = shortcutLabel(for: .restoreWindows)
-        let restoreItem = NSMenuItem(
-            title: "Restore Window Positions\(restoreShortcutLabel)",
-            action: #selector(restoreNow),
-            keyEquivalent: ""
-        )
-        restoreItem.target = self
-        menu.addItem(restoreItem)
+        let saveFrequencyItem = NSMenuItem(title: "Save Frequency", action: nil, keyEquivalent: "")
+        let saveFrequencySubmenu = NSMenu()
+        for option in saveIntervalOptions {
+            let item = NSMenuItem(
+                title: option.label,
+                action: #selector(changeSaveInterval),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.tag = Int(option.seconds)
+            item.state = (currentSaveInterval == option.seconds) ? .on : .off
+            saveFrequencySubmenu.addItem(item)
+        }
+        saveFrequencyItem.submenu = saveFrequencySubmenu
+        menu.addItem(saveFrequencyItem)
 
         let autoRestoreItem = NSMenuItem(title: "Auto-restore on Monitor Change", action: nil, keyEquivalent: "")
         let autoRestoreSubmenu = NSMenu()
@@ -268,33 +288,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(NSMenuItem.separator())
 
-        // Keyboard shortcuts settings
-        let shortcutsItem = NSMenuItem(
-            title: "Keyboard Shortcuts…",
-            action: #selector(showKeyboardShortcuts),
-            keyEquivalent: ""
-        )
-        shortcutsItem.target = self
-        menu.addItem(shortcutsItem)
+        // MARK: - Data Management
 
-        // Save frequency submenu
-        let saveFrequencyItem = NSMenuItem(title: "Save Frequency", action: nil, keyEquivalent: "")
-        let saveFrequencySubmenu = NSMenu()
-        for option in saveIntervalOptions {
-            let item = NSMenuItem(
-                title: option.label,
-                action: #selector(changeSaveInterval),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.tag = Int(option.seconds)
-            item.state = (currentSaveInterval == option.seconds) ? .on : .off
-            saveFrequencySubmenu.addItem(item)
-        }
-        saveFrequencyItem.submenu = saveFrequencySubmenu
-        menu.addItem(saveFrequencyItem)
-
-        // Keep windows for submenu (stale window threshold)
         let keepWindowsItem = NSMenuItem(title: "Keep Windows For", action: nil, keyEquivalent: "")
         let keepWindowsSubmenu = NSMenu()
         for option in staleThresholdOptions {
@@ -311,8 +306,6 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         keepWindowsItem.submenu = keepWindowsSubmenu
         menu.addItem(keepWindowsItem)
 
-        menu.addItem(NSMenuItem.separator())
-
         let clearAllItem = NSMenuItem(
             title: "Clear All Window Positions…",
             action: #selector(clearAllWindowPositions),
@@ -320,6 +313,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         clearAllItem.target = self
         menu.addItem(clearAllItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // MARK: - App Settings
+
+        let shortcutsItem = NSMenuItem(
+            title: "Keyboard Shortcuts…",
+            action: #selector(showKeyboardShortcuts),
+            keyEquivalent: ""
+        )
+        shortcutsItem.target = self
+        menu.addItem(shortcutsItem)
 
         let launchAtLoginItem = NSMenuItem(
             title: "Launch at Login",
@@ -331,6 +336,8 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(launchAtLoginItem)
 
         menu.addItem(NSMenuItem.separator())
+
+        // MARK: - Help & Info
 
         let howItWorksItem = NSMenuItem(
             title: "How It Works…",
@@ -355,6 +362,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         aboutItem.target = self
         menu.addItem(aboutItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        // MARK: - Quit
 
         let quitItem = NSMenuItem(
             title: "Quit",
@@ -597,12 +608,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         • Use "Pause Saving" to temporarily stop auto-saving
         • Each save captures windows visible on the current desktop
         • Windows from other desktops are preserved from previous saves
-        • Windows are identified by app + window title
 
         Restoring:
         • Use the keyboard shortcut or menu to restore
         • Only moves windows visible on your current desktop
-        • Each window is matched to its saved position by title
+        • Windows are matched by title, then by position (within same app)
+        • Position fallback handles browser tabs changing titles
         • Switch to another desktop and restore again to fix those windows
         • Customize shortcuts via Keyboard Shortcuts… in the menu
 

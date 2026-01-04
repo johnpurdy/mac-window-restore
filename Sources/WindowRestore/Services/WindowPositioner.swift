@@ -22,7 +22,16 @@ public protocol WindowPositioning: Sendable {
     func restoreWindows(snapshots: [WindowSnapshot]) -> [WindowRestoreResult]
 }
 
+/// Internal struct for current window info during restore
+private struct CurrentWindow: CurrentWindowInfo {
+    let element: AXUIElement
+    let title: String
+    let frame: CGRect
+    let bundleIdentifier: String
+}
+
 public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
+    private let matcher = WindowMatcher(distanceThreshold: 200)
 
     public init() {}
 
@@ -71,7 +80,7 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
         }
 
         // Get current window info (title, position, size) for all windows
-        var currentWindows: [(element: AXUIElement, title: String, frame: CGRect)] = []
+        var currentWindows: [CurrentWindow] = []
         for window in windows {
             var titleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
@@ -96,19 +105,25 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             // Skip zero-size windows
             if size.width > 0 && size.height > 0 {
                 let frame = CGRect(origin: position, size: size)
-                currentWindows.append((element: window, title: title, frame: frame))
+                currentWindows.append(CurrentWindow(
+                    element: window,
+                    title: title,
+                    frame: frame,
+                    bundleIdentifier: bundleId
+                ))
             }
         }
 
-        // KEY CHANGE: Iterate over CURRENT windows, find saved snapshot for each
+        // Iterate over CURRENT windows, find saved snapshot for each
         // This ensures each current window is only moved once
         var results: [WindowRestoreResult] = []
         var usedSnapshotIndices: Set<Int> = []
 
         for currentWindow in currentWindows {
-            let matchResult = findBestMatchingSnapshot(
-                currentWindow: currentWindow,
-                snapshots: snapshots,
+            // Use WindowMatcher for title-first, position-fallback matching
+            let matchResult = matcher.findMatch(
+                for: currentWindow,
+                in: snapshots,
                 excludedIndices: usedSnapshotIndices
             )
 
@@ -122,23 +137,6 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
         }
 
         return results
-    }
-
-    private func findBestMatchingSnapshot(
-        currentWindow: (element: AXUIElement, title: String, frame: CGRect),
-        snapshots: [WindowSnapshot],
-        excludedIndices: Set<Int>
-    ) -> (Int, WindowSnapshot)? {
-        // Match by exact title only - windows without titles are not saved
-        for (index, snapshot) in snapshots.enumerated() {
-            if excludedIndices.contains(index) { continue }
-
-            if !currentWindow.title.isEmpty && currentWindow.title == snapshot.windowTitle {
-                return (index, snapshot)
-            }
-        }
-
-        return nil
     }
 
     private func positionWindow(window: AXUIElement, snapshot: WindowSnapshot) -> WindowRestoreResult {

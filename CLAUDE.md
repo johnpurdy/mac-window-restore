@@ -43,6 +43,7 @@ Sources/WindowRestore/
 |---------|----------------|
 | `WindowEnumerator` | Gets all windows via CGWindowList + Accessibility API |
 | `WindowPositioner` | Moves windows via AXUIElement |
+| `WindowMatcher` | Title + position-based window matching |
 | `WindowMerger` | Merges current windows with saved, prunes stale entries |
 | `DisplayMonitor` | Detects monitor connect/disconnect |
 | `PersistenceService` | JSON storage to ~/Library/Application Support/WindowRestore/ |
@@ -119,7 +120,7 @@ Sources/WindowRestore/
 
 2. **Developer ID signing** - Use `codesign --force --deep --options runtime --sign "Developer ID Application: ..."` to preserve accessibility permissions across updates
 
-3. **Window matching** - Windows are matched by app bundle ID + window title. Empty titles match the first window.
+3. **Window matching** - Windows are matched first by title, then by position within the same app (200px threshold). Position fallback handles browser tabs changing titles.
 
 4. **Display identification** - Displays are identified by a hash of vendor/model/serial number, not display ID (which changes).
 
