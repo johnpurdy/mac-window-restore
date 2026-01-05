@@ -612,8 +612,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         Restoring:
         • Use the keyboard shortcut or menu to restore
         • Only moves windows visible on your current desktop
-        • Windows are matched by title, then by position (within same app)
-        • Position fallback handles browser tabs changing titles
+        • Each window is matched to its saved position by title
         • Switch to another desktop and restore again to fix those windows
         • Customize shortcuts via Keyboard Shortcuts… in the menu
 

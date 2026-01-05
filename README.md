@@ -85,8 +85,7 @@ Open **Keyboard Shortcuts…** from the menu to customize these.
 
 ### Restoring
 - Only moves windows visible on your current desktop
-- Windows are matched first by title, then by position (within same app)
-- Position fallback handles browser tabs changing titles between save/restore
+- Each window is matched to its saved position by title
 - Switch to another desktop and restore again to fix those windows
 
 ### Multiple Desktops
@@ -156,7 +155,6 @@ Sources/WindowRestore/
 └── Services/
     ├── WindowEnumerator.swift    # Get all windows via Accessibility API
     ├── WindowPositioner.swift    # Move windows
-    ├── WindowMatcher.swift       # Title + position-based matching
     ├── WindowMerger.swift        # Merge & prune stale windows
     ├── DisplayMonitor.swift      # Detect monitor changes
     ├── DisplayInfoProvider.swift # Get monitor info
