@@ -41,9 +41,9 @@ Sources/WindowRestore/
 
 | Service | Responsibility |
 |---------|----------------|
-| `WindowEnumerator` | Gets all windows via Accessibility API (includes minimized) |
-| `WindowPositioner` | Moves windows and sets minimized state via AXUIElement |
-| `WindowMerger` | Merges current windows with saved, prunes stale entries |
+| `WindowEnumerator` | Gets all windows via Accessibility API + CGWindowList (includes minimized, captures windowIdentifier) |
+| `WindowPositioner` | Moves windows via AXUIElement, matches by windowIdentifier first then title |
+| `WindowMerger` | Merges windows by windowIdentifier (or title fallback), prunes stale entries |
 | `DisplayMonitor` | Detects monitor connect/disconnect |
 | `PersistenceService` | JSON storage to ~/Library/Application Support/WindowRestore/ |
 | `SnapshotScheduler` | Configurable save timer (15s, 30s, 1min, 2min, 5min) |
@@ -59,7 +59,7 @@ Sources/WindowRestore/
 
 | Model | Fields |
 |-------|--------|
-| `WindowSnapshot` | bundleId, appName, windowTitle, displayId, frame, `lastSeenAt`, `isMinimized` |
+| `WindowSnapshot` | bundleId, appName, windowTitle, displayId, frame, `lastSeenAt`, `isMinimized`, `windowIdentifier` |
 | `DisplayInfo` | identifier, name, resolution, position |
 | `DisplayConfiguration` | identifier, displays[], windows[], capturedAt |
 
@@ -79,6 +79,7 @@ Sources/WindowRestore/
 | Multi-desktop support | Merge preserves windows from other desktops |
 | Stale cleanup | `WindowMerger` filters by `lastSeenAt` timestamp |
 | Minimized state tracking | `WindowEnumerator` reads `kAXMinimizedAttribute`, `WindowPositioner` restores it |
+| CGWindowID tracking | Windows identified by stable CGWindowID, with title fallback for legacy configs |
 
 ## Code Conventions
 
@@ -108,6 +109,7 @@ Sources/WindowRestore/
 | API | Purpose |
 |-----|---------|
 | `AXUIElement` | Get window titles/minimized state, move/resize/minimize windows |
+| `CGWindowListCopyWindowInfo` | Get CGWindowID for stable window identification |
 | `NSWorkspace.runningApplications` | Enumerate running apps for window enumeration |
 | `KeyboardShortcuts` (library) | Configurable global hotkeys |
 | `NSApplication.didChangeScreenParametersNotification` | Detect monitor changes |
@@ -120,7 +122,7 @@ Sources/WindowRestore/
 
 2. **Developer ID signing** - Use `codesign --force --deep --options runtime --sign "Developer ID Application: ..."` to preserve accessibility permissions across updates
 
-3. **Window matching** - Windows are matched by app bundle ID + window title.
+3. **Window matching** - Windows are matched by CGWindowID first (stable identifier), then by title as fallback. CGWindowID doesn't change when browser tabs switch, solving the multi-tab browser problem.
 
 4. **Display identification** - Displays are identified by a hash of vendor/model/serial number, not display ID (which changes).
 
@@ -129,3 +131,5 @@ Sources/WindowRestore/
 6. **Stale window cleanup** - Windows have a `lastSeenAt` timestamp. Windows older than the threshold (default 7 days) are pruned during merge. Legacy JSON without timestamps is handled via backward-compatible decoding.
 
 7. **Minimized state tracking** - Windows have an `isMinimized` field. Each monitor config saves its own minimized states. On restore, windows are minimized/unminimized to match the saved state. Legacy JSON without `isMinimized` defaults to `false`.
+
+8. **CGWindowID tracking** - Windows have a `windowIdentifier` field (CGWindowID). This stable ID is obtained by correlating AXUIElement windows with CGWindowList entries by PID + frame position. CGWindowID persists across tab switches in browsers. Legacy JSON without `windowIdentifier` uses title-based matching as fallback.

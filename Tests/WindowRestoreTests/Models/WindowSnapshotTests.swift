@@ -168,4 +168,63 @@ struct WindowSnapshotTests {
         // isMinimized should default to false for legacy JSON
         #expect(decoded.isMinimized == false)
     }
+
+    @Test("WindowSnapshot stores windowIdentifier")
+    func windowIdentifierStorage() throws {
+        let withIdentifier = WindowSnapshot(
+            applicationBundleIdentifier: "com.apple.Safari",
+            applicationName: "Safari",
+            windowTitle: "Apple",
+            displayIdentifier: "display-abc123",
+            frame: CGRect(x: 100, y: 200, width: 800, height: 600),
+            windowIdentifier: 12345
+        )
+
+        let withoutIdentifier = WindowSnapshot(
+            applicationBundleIdentifier: "com.apple.Safari",
+            applicationName: "Safari",
+            windowTitle: "Google",
+            displayIdentifier: "display-abc123",
+            frame: CGRect(x: 100, y: 200, width: 800, height: 600),
+            windowIdentifier: nil
+        )
+
+        #expect(withIdentifier.windowIdentifier == 12345)
+        #expect(withoutIdentifier.windowIdentifier == nil)
+
+        // Verify encoding/decoding preserves the value
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+
+        let withIdData = try encoder.encode(withIdentifier)
+        let decodedWithId = try decoder.decode(WindowSnapshot.self, from: withIdData)
+        #expect(decodedWithId.windowIdentifier == 12345)
+
+        let withoutIdData = try encoder.encode(withoutIdentifier)
+        let decodedWithoutId = try decoder.decode(WindowSnapshot.self, from: withoutIdData)
+        #expect(decodedWithoutId.windowIdentifier == nil)
+    }
+
+    @Test("WindowSnapshot decodes legacy JSON without windowIdentifier as nil")
+    func legacyJsonWithoutWindowIdentifier() throws {
+        // JSON saved before windowIdentifier was added
+        let legacyJson = """
+        {
+            "applicationBundleIdentifier": "com.apple.Safari",
+            "applicationName": "Safari",
+            "windowTitle": "Apple",
+            "displayIdentifier": "display-abc123",
+            "frame": [[100, 200], [800, 600]],
+            "lastSeenAt": 0,
+            "isMinimized": false
+        }
+        """
+
+        let decoder = JSONDecoder()
+        let data = legacyJson.data(using: .utf8)!
+        let decoded = try decoder.decode(WindowSnapshot.self, from: data)
+
+        // windowIdentifier should be nil for legacy JSON
+        #expect(decoded.windowIdentifier == nil)
+    }
 }

@@ -20,6 +20,9 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
     public func enumerateWindows() -> [WindowSnapshot] {
         let displays = displayInfoProvider.getDisplays()
 
+        // Get CGWindowList for correlating windowIdentifiers
+        let cgWindows = getCGWindowList()
+
         // Get all running applications with regular activation policy (normal apps)
         let runningApps = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular
@@ -49,13 +52,21 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                 // Find which display this window is on
                 let displayIdentifier = findDisplayForWindow(frame: axWindow.frame, displays: displays)
 
+                // Correlate with CGWindowList to get windowIdentifier
+                let windowIdentifier = findCGWindowIdentifier(
+                    pid: pid,
+                    frame: axWindow.frame,
+                    cgWindows: cgWindows
+                )
+
                 let snapshot = WindowSnapshot(
                     applicationBundleIdentifier: bundleIdentifier,
                     applicationName: appName,
                     windowTitle: axWindow.title,
                     displayIdentifier: displayIdentifier,
                     frame: axWindow.frame,
-                    isMinimized: axWindow.isMinimized
+                    isMinimized: axWindow.isMinimized,
+                    windowIdentifier: windowIdentifier
                 )
 
                 snapshots.append(snapshot)
@@ -138,5 +149,51 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
 
         // Fallback: return first display identifier or "unknown"
         return displays.first?.identifier ?? "unknown"
+    }
+
+    /// Get all windows from CGWindowList with their identifiers and bounds
+    private func getCGWindowList() -> [(windowIdentifier: Int, pid: pid_t, bounds: CGRect)] {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+
+        return windowInfoList.compactMap { windowInfo -> (windowIdentifier: Int, pid: pid_t, bounds: CGRect)? in
+            guard let windowNumber = windowInfo[kCGWindowNumber as String] as? Int,
+                  let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
+                  let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
+                  let x = boundsDict["X"] as? CGFloat,
+                  let y = boundsDict["Y"] as? CGFloat,
+                  let width = boundsDict["Width"] as? CGFloat,
+                  let height = boundsDict["Height"] as? CGFloat else {
+                return nil
+            }
+
+            let bounds = CGRect(x: x, y: y, width: width, height: height)
+            return (windowIdentifier: windowNumber, pid: ownerPID, bounds: bounds)
+        }
+    }
+
+    /// Find the CGWindowID for an AX window by matching PID and frame
+    private func findCGWindowIdentifier(
+        pid: pid_t,
+        frame: CGRect,
+        cgWindows: [(windowIdentifier: Int, pid: pid_t, bounds: CGRect)]
+    ) -> Int? {
+        // Filter to windows from the same process
+        let processWindows = cgWindows.filter { $0.pid == pid }
+
+        // Find a window with matching bounds (allowing small tolerance for rounding)
+        let tolerance: CGFloat = 2.0
+        for cgWindow in processWindows {
+            if abs(cgWindow.bounds.origin.x - frame.origin.x) <= tolerance &&
+               abs(cgWindow.bounds.origin.y - frame.origin.y) <= tolerance &&
+               abs(cgWindow.bounds.width - frame.width) <= tolerance &&
+               abs(cgWindow.bounds.height - frame.height) <= tolerance {
+                return cgWindow.windowIdentifier
+            }
+        }
+
+        return nil
     }
 }

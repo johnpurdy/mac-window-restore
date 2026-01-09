@@ -14,6 +14,7 @@ Window Restore runs quietly in your menu bar and:
 - **Auto-restores** windows when monitors connect or disconnect
 - **Remembers** different configurations for different monitor setups
 - **Tracks minimized state** — windows minimized in one config stay minimized when restored
+- **Handles browser windows** — multiple browser windows restore correctly even when tabs change
 - **Cleans up** stale windows that haven't been seen in a configurable period
 
 ## Requirements
@@ -86,7 +87,8 @@ Open **Keyboard Shortcuts…** from the menu to customize these.
 
 ### Restoring
 - Only moves windows visible on your current desktop
-- Each window is matched to its saved position by title
+- Windows are matched by their unique window ID (stable even when browser tabs change)
+- Falls back to title matching for legacy saved data
 - Switch to another desktop and restore again to fix those windows
 
 ### Multiple Desktops
@@ -104,6 +106,11 @@ Open **Keyboard Shortcuts…** from the menu to customize these.
 - Each monitor configuration saves its own minimized states
 - Example: Multi-monitor has all windows visible, laptop-only has some minimized
 - When switching configs, windows are automatically minimized/unminimized to match
+
+### Browser Windows
+- Multiple browser windows are tracked separately, even with similar tab titles
+- Windows are identified by a stable ID that doesn't change when you switch tabs
+- This means your browser windows restore correctly regardless of which tab is active
 
 ### Cleanup
 - Windows not seen within the "Keep Windows For" period are removed

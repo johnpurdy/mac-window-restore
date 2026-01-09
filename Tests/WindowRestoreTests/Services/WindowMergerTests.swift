@@ -135,4 +135,135 @@ struct WindowMergerTests {
 
         #expect(merged.count == 2)
     }
+
+    @Test("mergeWindows uses windowIdentifier as primary key")
+    func usesWindowIdentifierAsPrimaryKey() {
+        let now = Date()
+        let oneDayAgo = now.addingTimeInterval(-1 * 24 * 3600)
+        let sevenDayThreshold: TimeInterval = 7 * 24 * 3600
+
+        // Current window with windowId 12345, title changed from "Tab A" to "Tab B"
+        let currentWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Tab B",  // Title changed due to tab switch
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 100, y: 100, width: 800, height: 600),
+                lastSeenAt: now,
+                windowIdentifier: 12345
+            )
+        ]
+
+        // Existing window with same windowId but old title
+        let existingWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Tab A",  // Old title
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 50, y: 50, width: 800, height: 600),  // Old position
+                lastSeenAt: oneDayAgo,
+                windowIdentifier: 12345  // Same window!
+            )
+        ]
+
+        let merged = WindowMerger.merge(
+            currentWindows: currentWindows,
+            existingWindows: existingWindows,
+            staleThreshold: sevenDayThreshold
+        )
+
+        // Should have only 1 window (current wins, same windowId)
+        #expect(merged.count == 1)
+        #expect(merged[0].windowTitle == "Tab B")  // Current title
+        #expect(merged[0].windowIdentifier == 12345)
+    }
+
+    @Test("mergeWindows falls back to title when windowIdentifier is nil")
+    func fallsBackToTitleWhenNoWindowIdentifier() {
+        let now = Date()
+        let oneDayAgo = now.addingTimeInterval(-1 * 24 * 3600)
+        let sevenDayThreshold: TimeInterval = 7 * 24 * 3600
+
+        // Window without windowIdentifier
+        let currentWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Apple",
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 100, y: 100, width: 800, height: 600),
+                lastSeenAt: now,
+                windowIdentifier: nil  // No windowId available
+            )
+        ]
+
+        // Existing window with same title, also no windowId
+        let existingWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Apple",  // Same title
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 50, y: 50, width: 800, height: 600),
+                lastSeenAt: oneDayAgo,
+                windowIdentifier: nil  // Also no windowId
+            )
+        ]
+
+        let merged = WindowMerger.merge(
+            currentWindows: currentWindows,
+            existingWindows: existingWindows,
+            staleThreshold: sevenDayThreshold
+        )
+
+        // Should match by title fallback, so only 1 window
+        #expect(merged.count == 1)
+        #expect(merged[0].lastSeenAt == now)
+    }
+
+    @Test("mergeWindows treats different windowIdentifiers as different windows")
+    func differentWindowIdentifiersAreDifferentWindows() {
+        let now = Date()
+        let oneDayAgo = now.addingTimeInterval(-1 * 24 * 3600)
+        let sevenDayThreshold: TimeInterval = 7 * 24 * 3600
+
+        // Two browser windows with same title but different windowIds
+        let currentWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Google",
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                lastSeenAt: now,
+                windowIdentifier: 11111
+            )
+        ]
+
+        let existingWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Google",  // Same title!
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 100, y: 100, width: 800, height: 600),
+                lastSeenAt: oneDayAgo,
+                windowIdentifier: 22222  // Different window
+            )
+        ]
+
+        let merged = WindowMerger.merge(
+            currentWindows: currentWindows,
+            existingWindows: existingWindows,
+            staleThreshold: sevenDayThreshold
+        )
+
+        // Should have 2 windows - different windowIds mean different windows
+        #expect(merged.count == 2)
+        let windowIds = merged.compactMap { $0.windowIdentifier }
+        #expect(windowIds.contains(11111))
+        #expect(windowIds.contains(22222))
+    }
 }

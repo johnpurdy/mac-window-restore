@@ -119,6 +119,65 @@ struct WindowEnumeratorTests {
         let visibleWindows = windows.filter { !$0.isMinimized }
         #expect(visibleWindows.count == 2)
     }
+
+    @Test("WindowEnumerator captures windowIdentifier for windows")
+    func capturesWindowIdentifier() {
+        let mockEnumerator = MockWindowEnumerator()
+        mockEnumerator.mockWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Tab 1",
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 100, y: 100, width: 800, height: 600),
+                windowIdentifier: 12345
+            ),
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Tab 2",
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 200, y: 200, width: 800, height: 600),
+                windowIdentifier: 67890
+            )
+        ]
+
+        let windows = mockEnumerator.enumerateWindows()
+
+        #expect(windows.count == 2)
+        #expect(windows[0].windowIdentifier == 12345)
+        #expect(windows[1].windowIdentifier == 67890)
+    }
+
+    @Test("WindowEnumerator differentiates browser windows by windowIdentifier")
+    func differentiatesBrowserWindowsByIdentifier() {
+        // Same app, similar titles (tabs can have same titles), but different windowIdentifiers
+        let mockEnumerator = MockWindowEnumerator()
+        mockEnumerator.mockWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Google",  // Both windows showing Google
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 0, y: 0, width: 1920, height: 1080),
+                windowIdentifier: 11111
+            ),
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.Safari",
+                applicationName: "Safari",
+                windowTitle: "Google",  // Same title!
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 100, y: 100, width: 1920, height: 1080),
+                windowIdentifier: 22222  // Different window
+            )
+        ]
+
+        let windows = mockEnumerator.enumerateWindows()
+
+        // Both windows should be tracked separately due to different windowIdentifiers
+        #expect(windows.count == 2)
+        #expect(windows[0].windowIdentifier != windows[1].windowIdentifier)
+    }
 }
 
 // Mock implementation for testing

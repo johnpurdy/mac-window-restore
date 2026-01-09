@@ -18,10 +18,11 @@ public enum WindowMerger {
         let cutoffDate = now.addingTimeInterval(-staleThreshold)
 
         // Create a set of unique identifiers for current windows
-        // Key: (bundleId, windowTitle)
+        // Primary key: bundleId|id:windowIdentifier when available
+        // Fallback key: bundleId|title:windowTitle when no windowIdentifier
         var currentWindowKeys = Set<String>()
         for window in currentWindows {
-            let key = "\(window.applicationBundleIdentifier)|\(window.windowTitle)"
+            let key = generateWindowKey(window)
             currentWindowKeys.insert(key)
         }
 
@@ -32,12 +33,21 @@ public enum WindowMerger {
         // 1. Aren't currently visible (they're on other desktops)
         // 2. Are not stale (lastSeenAt is after the cutoff date)
         for existingWindow in existingWindows {
-            let key = "\(existingWindow.applicationBundleIdentifier)|\(existingWindow.windowTitle)"
+            let key = generateWindowKey(existingWindow)
             if !currentWindowKeys.contains(key) && existingWindow.lastSeenAt > cutoffDate {
                 mergedWindows.append(existingWindow)
             }
         }
 
         return mergedWindows
+    }
+
+    /// Generates a unique key for a window.
+    /// Uses windowIdentifier as primary key when available, falls back to title.
+    private static func generateWindowKey(_ window: WindowSnapshot) -> String {
+        if let windowIdentifier = window.windowIdentifier {
+            return "\(window.applicationBundleIdentifier)|id:\(windowIdentifier)"
+        }
+        return "\(window.applicationBundleIdentifier)|title:\(window.windowTitle)"
     }
 }

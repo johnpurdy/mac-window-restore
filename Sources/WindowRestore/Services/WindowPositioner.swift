@@ -53,8 +53,10 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             return []
         }
 
+        let pid = app.processIdentifier
+
         // Get AXUIElement for the application
-        let appElement = AXUIElementCreateApplication(app.processIdentifier)
+        let appElement = AXUIElementCreateApplication(pid)
 
         // Get windows
         var windowsRef: CFTypeRef?
@@ -70,8 +72,11 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             return []
         }
 
-        // Get current window info (title, position, size) for all windows
-        var currentWindows: [(element: AXUIElement, title: String, frame: CGRect)] = []
+        // Get CGWindowList for this app's windows to correlate windowIdentifiers
+        let cgWindows = getCGWindowsForPid(pid)
+
+        // Get current window info (title, position, size, windowId) for all windows
+        var currentWindows: [(element: AXUIElement, title: String, frame: CGRect, windowIdentifier: Int?)] = []
         for window in windows {
             var titleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
@@ -96,7 +101,9 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             // Skip zero-size windows
             if size.width > 0 && size.height > 0 {
                 let frame = CGRect(origin: position, size: size)
-                currentWindows.append((element: window, title: title, frame: frame))
+                // Correlate with CGWindowList to get windowIdentifier
+                let windowIdentifier = findCGWindowIdentifier(frame: frame, cgWindows: cgWindows)
+                currentWindows.append((element: window, title: title, frame: frame, windowIdentifier: windowIdentifier))
             }
         }
 
@@ -114,7 +121,8 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
 
             if let (snapshotIndex, snapshot) = matchResult {
                 usedSnapshotIndices.insert(snapshotIndex)
-                logger.info("Matched: \"\(currentWindow.title)\" current=(\(Int(currentWindow.frame.origin.x)),\(Int(currentWindow.frame.origin.y)) \(Int(currentWindow.frame.width))x\(Int(currentWindow.frame.height))) -> target=(\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
+                let matchType = (currentWindow.windowIdentifier != nil && snapshot.windowIdentifier != nil && currentWindow.windowIdentifier == snapshot.windowIdentifier) ? "windowId" : "title"
+                logger.info("Matched (\(matchType)): \"\(currentWindow.title)\" current=(\(Int(currentWindow.frame.origin.x)),\(Int(currentWindow.frame.origin.y)) \(Int(currentWindow.frame.width))x\(Int(currentWindow.frame.height))) -> target=(\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
                 let restoreResult = positionWindow(window: currentWindow.element, snapshot: snapshot)
                 results.append(restoreResult)
             }
@@ -124,15 +132,67 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
         return results
     }
 
+    /// Get CGWindowList entries for a specific process
+    private func getCGWindowsForPid(_ pid: pid_t) -> [(windowIdentifier: Int, bounds: CGRect)] {
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
+            return []
+        }
+
+        return windowInfoList.compactMap { windowInfo -> (windowIdentifier: Int, bounds: CGRect)? in
+            guard let windowNumber = windowInfo[kCGWindowNumber as String] as? Int,
+                  let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
+                  ownerPID == pid,
+                  let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
+                  let x = boundsDict["X"] as? CGFloat,
+                  let y = boundsDict["Y"] as? CGFloat,
+                  let width = boundsDict["Width"] as? CGFloat,
+                  let height = boundsDict["Height"] as? CGFloat else {
+                return nil
+            }
+
+            let bounds = CGRect(x: x, y: y, width: width, height: height)
+            return (windowIdentifier: windowNumber, bounds: bounds)
+        }
+    }
+
+    /// Find the CGWindowID for a window by matching frame
+    private func findCGWindowIdentifier(
+        frame: CGRect,
+        cgWindows: [(windowIdentifier: Int, bounds: CGRect)]
+    ) -> Int? {
+        // Find a window with matching bounds (allowing small tolerance for rounding)
+        let tolerance: CGFloat = 2.0
+        for cgWindow in cgWindows {
+            if abs(cgWindow.bounds.origin.x - frame.origin.x) <= tolerance &&
+               abs(cgWindow.bounds.origin.y - frame.origin.y) <= tolerance &&
+               abs(cgWindow.bounds.width - frame.width) <= tolerance &&
+               abs(cgWindow.bounds.height - frame.height) <= tolerance {
+                return cgWindow.windowIdentifier
+            }
+        }
+        return nil
+    }
+
     private func findBestMatchingSnapshot(
-        currentWindow: (element: AXUIElement, title: String, frame: CGRect),
+        currentWindow: (element: AXUIElement, title: String, frame: CGRect, windowIdentifier: Int?),
         snapshots: [WindowSnapshot],
         excludedIndices: Set<Int>
     ) -> (Int, WindowSnapshot)? {
-        // Match by exact title only - windows without titles are not saved
+        // First try: match by windowIdentifier (highest priority)
+        if let currentWindowId = currentWindow.windowIdentifier {
+            for (index, snapshot) in snapshots.enumerated() {
+                if excludedIndices.contains(index) { continue }
+                if let snapshotWindowId = snapshot.windowIdentifier,
+                   currentWindowId == snapshotWindowId {
+                    return (index, snapshot)
+                }
+            }
+        }
+
+        // Second try: match by title (fallback for legacy data or when windowId unavailable)
         for (index, snapshot) in snapshots.enumerated() {
             if excludedIndices.contains(index) { continue }
-
             if !currentWindow.title.isEmpty && currentWindow.title == snapshot.windowTitle {
                 return (index, snapshot)
             }
