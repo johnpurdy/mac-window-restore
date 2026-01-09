@@ -1,17 +1,26 @@
 #!/bin/bash
 set -euo pipefail
 
-VERSION="${1:-1.0.0}"
 SIGNING_IDENTITY="Developer ID Application: John Purdy (2U3X822638)"
 NOTARIZE_PROFILE="WindowRestore-Notarize"
 APP_NAME="Window Restore"
 BINARY_NAME="WindowRestore"
 BUNDLE_ID="com.windowrestore.app"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
 BUILD_DIR=".build/release-package"
 APP_PATH="$BUILD_DIR/$APP_NAME.app"
-DMG_PATH=".build/WindowRestore-$VERSION.dmg"
 TEMPLATE_APP="/Applications/$APP_NAME.app"
+INFO_PLIST="$PROJECT_DIR/Resources/Info.plist"
+
+# Read version from Info.plist
+if [[ ! -f "$INFO_PLIST" ]]; then
+    echo "Error: Info.plist not found at $INFO_PLIST"
+    exit 1
+fi
+VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$INFO_PLIST")
+DMG_PATH=".build/WindowRestore-$VERSION.dmg"
 
 echo "=== Building Window Restore v$VERSION ==="
 
@@ -19,11 +28,6 @@ echo "=== Building Window Restore v$VERSION ==="
 if [[ ! -d "$TEMPLATE_APP" ]]; then
     echo "Error: Template app bundle not found at $TEMPLATE_APP"
     echo "Please install the app first before creating a release."
-    exit 1
-fi
-
-if [[ ! -f "$TEMPLATE_APP/Contents/Info.plist" ]]; then
-    echo "Error: Invalid app bundle structure - missing Info.plist"
     exit 1
 fi
 
@@ -50,9 +54,8 @@ cp -R "$TEMPLATE_APP" "$APP_PATH"
 # Copy new binary
 cp "$BINARY_PATH" "$APP_PATH/Contents/MacOS/$BINARY_NAME"
 
-# Update version in Info.plist
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_PATH/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
+# Copy Info.plist from project (source of truth for version)
+cp "$INFO_PLIST" "$APP_PATH/Contents/Info.plist"
 
 # Sign the app
 echo "Signing app..."

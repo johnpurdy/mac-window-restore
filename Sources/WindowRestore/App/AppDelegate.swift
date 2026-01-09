@@ -626,6 +626,11 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         • Toggle each via "Auto-restore on Monitor Change" submenu
         • Different monitor configurations are saved separately
 
+        Minimized Windows:
+        • The app tracks whether each window is minimized or visible
+        • Each monitor configuration saves its own minimized states
+        • When switching configs, windows are auto-minimized/unminimized
+
         Cleanup:
         • Windows not seen within the "Keep Windows For" period are removed
         • This prevents the saved data from growing indefinitely
@@ -655,9 +660,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showAbout(_ sender: Any?) {
         let intervalLabel = saveIntervalOptions.first { $0.seconds == currentSaveInterval }?.label ?? "\(Int(currentSaveInterval)) seconds"
+        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
         let alert = NSAlert()
         alert.messageText = "Window Restore"
-        alert.informativeText = "Automatically saves and restores window positions when external monitors are connected or disconnected.\n\nWindow positions are saved every \(intervalLabel)."
+        alert.informativeText = "Version \(version)\n\nAutomatically saves and restores window positions when external monitors are connected or disconnected.\n\nWindow positions are saved every \(intervalLabel)."
         alert.alertStyle = .informational
         alert.runModal()
     }

@@ -156,9 +156,21 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
         }
 
+        // Set minimized state (after positioning so window goes to correct spot)
+        let minimizedValue: CFBoolean = snapshot.isMinimized ? kCFBooleanTrue : kCFBooleanFalse
+        let minimizedResult = AXUIElementSetAttributeValue(
+            window,
+            kAXMinimizedAttribute as CFString,
+            minimizedValue
+        )
+
         let success = positionResult == .success && sizeResult == .success
         if success {
-            logger.info("Positioned: \"\(snapshot.windowTitle)\" to (\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
+            let minimizedStatus = snapshot.isMinimized ? " (minimized)" : ""
+            logger.info("Positioned: \"\(snapshot.windowTitle)\" to (\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))\(minimizedStatus)")
+            if minimizedResult != .success {
+                logger.warning("Failed to set minimized state for: \"\(snapshot.windowTitle)\" err=\(minimizedResult.rawValue)")
+            }
         } else {
             logger.error("Failed to position: \"\(snapshot.windowTitle)\" posErr=\(positionResult.rawValue) sizeErr=\(sizeResult.rawValue)")
         }

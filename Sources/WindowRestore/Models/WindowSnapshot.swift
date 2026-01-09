@@ -8,6 +8,7 @@ public struct WindowSnapshot: Codable, Equatable, Sendable {
     public let displayIdentifier: String
     public let frame: CGRect
     public let lastSeenAt: Date
+    public let isMinimized: Bool
 
     public init(
         applicationBundleIdentifier: String,
@@ -15,7 +16,8 @@ public struct WindowSnapshot: Codable, Equatable, Sendable {
         windowTitle: String,
         displayIdentifier: String,
         frame: CGRect,
-        lastSeenAt: Date = Date()
+        lastSeenAt: Date = Date(),
+        isMinimized: Bool = false
     ) {
         self.applicationBundleIdentifier = applicationBundleIdentifier
         self.applicationName = applicationName
@@ -23,6 +25,7 @@ public struct WindowSnapshot: Codable, Equatable, Sendable {
         self.displayIdentifier = displayIdentifier
         self.frame = frame
         self.lastSeenAt = lastSeenAt
+        self.isMinimized = isMinimized
     }
 
     public init(from decoder: Decoder) throws {
@@ -33,6 +36,7 @@ public struct WindowSnapshot: Codable, Equatable, Sendable {
         displayIdentifier = try container.decode(String.self, forKey: .displayIdentifier)
         frame = try container.decode(CGRect.self, forKey: .frame)
         lastSeenAt = try container.decodeIfPresent(Date.self, forKey: .lastSeenAt) ?? Date()
+        isMinimized = try container.decodeIfPresent(Bool.self, forKey: .isMinimized) ?? false
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -42,5 +46,6 @@ public struct WindowSnapshot: Codable, Equatable, Sendable {
         case displayIdentifier
         case frame
         case lastSeenAt
+        case isMinimized
     }
 }

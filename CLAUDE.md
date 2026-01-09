@@ -41,8 +41,8 @@ Sources/WindowRestore/
 
 | Service | Responsibility |
 |---------|----------------|
-| `WindowEnumerator` | Gets all windows via CGWindowList + Accessibility API |
-| `WindowPositioner` | Moves windows via AXUIElement |
+| `WindowEnumerator` | Gets all windows via Accessibility API (includes minimized) |
+| `WindowPositioner` | Moves windows and sets minimized state via AXUIElement |
 | `WindowMerger` | Merges current windows with saved, prunes stale entries |
 | `DisplayMonitor` | Detects monitor connect/disconnect |
 | `PersistenceService` | JSON storage to ~/Library/Application Support/WindowRestore/ |
@@ -59,7 +59,7 @@ Sources/WindowRestore/
 
 | Model | Fields |
 |-------|--------|
-| `WindowSnapshot` | bundleId, appName, windowTitle, displayId, frame, `lastSeenAt` |
+| `WindowSnapshot` | bundleId, appName, windowTitle, displayId, frame, `lastSeenAt`, `isMinimized` |
 | `DisplayInfo` | identifier, name, resolution, position |
 | `DisplayConfiguration` | identifier, displays[], windows[], capturedAt |
 
@@ -78,6 +78,7 @@ Sources/WindowRestore/
 | Launch at Login | `SMAppService.mainApp` (macOS 13+) |
 | Multi-desktop support | Merge preserves windows from other desktops |
 | Stale cleanup | `WindowMerger` filters by `lastSeenAt` timestamp |
+| Minimized state tracking | `WindowEnumerator` reads `kAXMinimizedAttribute`, `WindowPositioner` restores it |
 
 ## Code Conventions
 
@@ -106,8 +107,8 @@ Sources/WindowRestore/
 
 | API | Purpose |
 |-----|---------|
-| `CGWindowListCopyWindowInfo` | Enumerate visible windows |
-| `AXUIElement` | Get window titles, move/resize windows |
+| `AXUIElement` | Get window titles/minimized state, move/resize/minimize windows |
+| `NSWorkspace.runningApplications` | Enumerate running apps for window enumeration |
 | `KeyboardShortcuts` (library) | Configurable global hotkeys |
 | `NSApplication.didChangeScreenParametersNotification` | Detect monitor changes |
 | `CGDirectDisplay` | Get display properties |
@@ -126,3 +127,5 @@ Sources/WindowRestore/
 5. **App bundle required** - Must run as .app bundle (not raw executable) for Accessibility to work properly.
 
 6. **Stale window cleanup** - Windows have a `lastSeenAt` timestamp. Windows older than the threshold (default 7 days) are pruned during merge. Legacy JSON without timestamps is handled via backward-compatible decoding.
+
+7. **Minimized state tracking** - Windows have an `isMinimized` field. Each monitor config saves its own minimized states. On restore, windows are minimized/unminimized to match the saved state. Legacy JSON without `isMinimized` defaults to `false`.

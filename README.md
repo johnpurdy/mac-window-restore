@@ -13,6 +13,7 @@ Window Restore runs quietly in your menu bar and:
 - **Auto-saves** window positions at a configurable interval (default: 30 seconds)
 - **Auto-restores** windows when monitors connect or disconnect
 - **Remembers** different configurations for different monitor setups
+- **Tracks minimized state** — windows minimized in one config stay minimized when restored
 - **Cleans up** stale windows that haven't been seen in a configurable period
 
 ## Requirements
@@ -97,6 +98,12 @@ Open **Keyboard Shortcuts…** from the menu to customize these.
 - Restore triggers automatically when monitors connect or disconnect
 - Both can be individually toggled via "Auto-restore on Monitor Change" submenu
 - Different monitor configurations are saved separately
+
+### Minimized Windows
+- The app tracks whether each window is minimized or visible
+- Each monitor configuration saves its own minimized states
+- Example: Multi-monitor has all windows visible, laptop-only has some minimized
+- When switching configs, windows are automatically minimized/unminimized to match
 
 ### Cleanup
 - Windows not seen within the "Keep Windows For" period are removed

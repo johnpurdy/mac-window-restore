@@ -4,6 +4,8 @@ set -euo pipefail
 SIGNING_IDENTITY="Developer ID Application: John Purdy (2U3X822638)"
 APP_PATH="/Applications/Window Restore.app"
 BINARY_NAME="WindowRestore"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 DEV_MODE=false
 
 # Parse arguments
@@ -33,8 +35,20 @@ else
     BINARY_PATH=$(swift build -c release --show-bin-path)/$BINARY_NAME
 fi
 
+# Quit the app if running (to avoid code signature crashes)
+if pgrep -x "$BINARY_NAME" > /dev/null; then
+    echo "Stopping running instance..."
+    pkill -x "$BINARY_NAME" || true
+    sleep 1
+fi
+
 echo "Installing to $APP_PATH..."
 cp "$BINARY_PATH" "$APP_PATH/Contents/MacOS/$BINARY_NAME"
+
+# Copy Info.plist from project Resources (keeps version in sync)
+if [[ -f "$PROJECT_DIR/Resources/Info.plist" ]]; then
+    cp "$PROJECT_DIR/Resources/Info.plist" "$APP_PATH/Contents/Info.plist"
+fi
 
 echo "Signing with: $SIGNING_IDENTITY"
 codesign --force --deep --options runtime --sign "$SIGNING_IDENTITY" "$APP_PATH"
