@@ -237,6 +237,20 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
     }
 
     private func positionWindow(window: AXUIElement, snapshot: WindowSnapshot) -> WindowRestoreResult {
+        // Get current position/size BEFORE move
+        var beforePos = CGPoint.zero
+        var beforeSize = CGSize.zero
+        var posRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &posRef)
+        AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
+        if let pv = posRef, CFGetTypeID(pv) == AXValueGetTypeID() {
+            AXValueGetValue(pv as! AXValue, .cgPoint, &beforePos)
+        }
+        if let sv = sizeRef, CFGetTypeID(sv) == AXValueGetTypeID() {
+            AXValueGetValue(sv as! AXValue, .cgSize, &beforeSize)
+        }
+
         // Set position
         var position = CGPoint(x: snapshot.frame.origin.x, y: snapshot.frame.origin.y)
         var positionResult: AXError = .failure
@@ -251,6 +265,25 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
         }
 
+        // Get position/size AFTER move
+        var afterPos = CGPoint.zero
+        var afterSize = CGSize.zero
+        posRef = nil
+        sizeRef = nil
+        AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &posRef)
+        AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
+        if let pv = posRef, CFGetTypeID(pv) == AXValueGetTypeID() {
+            AXValueGetValue(pv as! AXValue, .cgPoint, &afterPos)
+        }
+        if let sv = sizeRef, CFGetTypeID(sv) == AXValueGetTypeID() {
+            AXValueGetValue(sv as! AXValue, .cgSize, &afterSize)
+        }
+
+        // Get minimized state BEFORE
+        var minimizedRef: CFTypeRef?
+        AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef)
+        let wasMinimized = (minimizedRef as? Bool) ?? false
+
         // Set minimized state (after positioning so window goes to correct spot)
         let minimizedValue: CFBoolean = snapshot.isMinimized ? kCFBooleanTrue : kCFBooleanFalse
         let minimizedResult = AXUIElementSetAttributeValue(
@@ -259,15 +292,24 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             minimizedValue
         )
 
+        // Get minimized state AFTER
+        minimizedRef = nil
+        AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef)
+        let isNowMinimized = (minimizedRef as? Bool) ?? false
+
         let success = positionResult == .success && sizeResult == .success
+        let moved = (Int(beforePos.x) != Int(afterPos.x) || Int(beforePos.y) != Int(afterPos.y) ||
+                     Int(beforeSize.width) != Int(afterSize.width) || Int(beforeSize.height) != Int(afterSize.height))
         if success {
             let minimizedStatus = snapshot.isMinimized ? " (minimizing)" : ""
-            devLog("Positioned: \"\(snapshot.windowTitle)\" to (\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))\(minimizedStatus)")
+            let moveStatus = moved ? "MOVED" : "NO CHANGE"
+            devLog("[\(moveStatus)] \"\(snapshot.windowTitle)\" BEFORE:(\(Int(beforePos.x)),\(Int(beforePos.y)) \(Int(beforeSize.width))x\(Int(beforeSize.height))) AFTER:(\(Int(afterPos.x)),\(Int(afterPos.y)) \(Int(afterSize.width))x\(Int(afterSize.height))) TARGET:(\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))\(minimizedStatus)")
             if snapshot.isMinimized {
+                let minimizeChanged = (wasMinimized != isNowMinimized)
                 if minimizedResult == .success {
-                    devLog("  -> Minimized successfully")
+                    devLog("  -> Minimize: wasMin=\(wasMinimized) isNowMin=\(isNowMinimized) changed=\(minimizeChanged)")
                 } else {
-                    devLog("  -> FAILED to minimize: err=\(minimizedResult.rawValue)")
+                    devLog("  -> FAILED to minimize: err=\(minimizedResult.rawValue) wasMin=\(wasMinimized) isNowMin=\(isNowMinimized)")
                 }
             }
         } else {

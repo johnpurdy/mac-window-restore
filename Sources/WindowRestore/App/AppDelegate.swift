@@ -51,6 +51,7 @@ private let defaultStaleThresholdDays: Int = 7
 // UserDefaults keys for auto-restore on monitor change
 private let restoreOnConnectKey = "RestoreOnConnectEnabled"
 private let restoreOnDisconnectKey = "RestoreOnDisconnectEnabled"
+private let restoreOnSpaceChangeKey = "RestoreOnSpaceChangeEnabled"
 
 // Available stale window thresholds (in days)
 private let staleThresholdOptions: [(label: String, days: Int)] = [
@@ -66,6 +67,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem?
     private var snapshotScheduler: SnapshotScheduler?
     private var displayMonitor: DisplayMonitor?
+    private var spaceMonitor: SpaceMonitor?
     private let keyboardShortcutManager = KeyboardShortcutManager()
     private let shortcutsSettingsWindow = ShortcutsSettingsWindow()
 
@@ -127,6 +129,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    private var isRestoreOnSpaceChangeEnabled: Bool {
+        get {
+            // Default to true if not set
+            if UserDefaults.standard.object(forKey: restoreOnSpaceChangeKey) == nil {
+                return true
+            }
+            return UserDefaults.standard.bool(forKey: restoreOnSpaceChangeKey)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: restoreOnSpaceChangeKey)
+        }
+    }
+
     override public init() {
         self.windowEnumerator = WindowEnumerator(displayInfoProvider: displayInfoProvider)
         super.init()
@@ -153,12 +168,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         startDisplayMonitor()
         log("Display monitor started")
 
+        // Start space monitor
+        startSpaceMonitor()
+        log("Space monitor started")
+
         log("Window Restore ready")
     }
 
     public func applicationWillTerminate(_ notification: Notification) {
         snapshotScheduler?.stop()
         displayMonitor?.stop()
+        spaceMonitor?.stop()
     }
 
     // MARK: - Setup
@@ -287,6 +307,15 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         autoRestoreItem.submenu = autoRestoreSubmenu
         menu.addItem(autoRestoreItem)
+
+        let restoreOnDesktopChangeItem = NSMenuItem(
+            title: "Restore on Desktop Change",
+            action: #selector(toggleRestoreOnSpaceChange),
+            keyEquivalent: ""
+        )
+        restoreOnDesktopChangeItem.target = self
+        restoreOnDesktopChangeItem.state = isRestoreOnSpaceChangeEnabled ? .on : .off
+        menu.addItem(restoreOnDesktopChangeItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -424,6 +453,23 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         )
         displayMonitor?.start()
+    }
+
+    private func startSpaceMonitor() {
+        spaceMonitor = SpaceMonitor(
+            onSpaceChange: { [weak self] in
+                Task { @MainActor in
+                    guard let self = self else { return }
+
+                    if self.isRestoreOnSpaceChangeEnabled {
+                        // Small delay to let the space transition complete
+                        try? await Task.sleep(for: .milliseconds(500))
+                        self.restoreWindowPositions()
+                    }
+                }
+            }
+        )
+        spaceMonitor?.start()
     }
 
     // MARK: - Save & Restore
@@ -581,6 +627,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         isRestoreOnDisconnectEnabled.toggle()
         sender.state = isRestoreOnDisconnectEnabled ? .on : .off
         log("Restore on monitor disconnect: \(isRestoreOnDisconnectEnabled ? "enabled" : "disabled")")
+    }
+
+    @objc func toggleRestoreOnSpaceChange(_ sender: NSMenuItem) {
+        isRestoreOnSpaceChangeEnabled.toggle()
+        sender.state = isRestoreOnSpaceChangeEnabled ? .on : .off
+        log("Restore on desktop change: \(isRestoreOnSpaceChangeEnabled ? "enabled" : "disabled")")
     }
 
     @objc func clearAllWindowPositions(_ sender: Any?) {
