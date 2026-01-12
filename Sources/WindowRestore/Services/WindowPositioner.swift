@@ -5,6 +5,33 @@ import ApplicationServices
 import os
 
 private let logger = Logger(subsystem: "com.windowrestore.app", category: "restore")
+private let isDevMode = true  // TODO: Change back to CommandLine.arguments.contains("--dev") before release
+
+private func devLog(_ message: String) {
+    logger.info("\(message)")
+    if isDevMode {
+        let timestamp = ISO8601DateFormatter().string(from: Date())
+        let logMessage = "[RESTORE \(timestamp)] \(message)\n"
+        print(logMessage, terminator: "")
+
+        // Also write to log file for when running as app
+        if let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
+            let logDir = appSupport.appendingPathComponent("WindowRestore")
+            let logFile = logDir.appendingPathComponent("restore.log")
+            if let data = logMessage.data(using: .utf8) {
+                if FileManager.default.fileExists(atPath: logFile.path) {
+                    if let handle = try? FileHandle(forWritingTo: logFile) {
+                        handle.seekToEndOfFile()
+                        handle.write(data)
+                        handle.closeFile()
+                    }
+                } else {
+                    try? data.write(to: logFile)
+                }
+            }
+        }
+    }
+}
 
 public struct WindowRestoreResult: Sendable {
     public let snapshot: WindowSnapshot
@@ -27,6 +54,9 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
     public init() {}
 
     public func restoreWindows(snapshots: [WindowSnapshot]) -> [WindowRestoreResult] {
+        let minimizedCount = snapshots.filter { $0.isMinimized }.count
+        devLog("Starting restore: \(snapshots.count) windows (\(minimizedCount) should be minimized)")
+
         // Group snapshots by application bundle identifier
         var snapshotsByApp: [String: [WindowSnapshot]] = [:]
         for snapshot in snapshots {
@@ -41,6 +71,7 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             results.append(contentsOf: appResults)
         }
 
+        devLog("Restore complete: \(results.filter { $0.success }.count)/\(results.count) windows positioned")
         return results
     }
 
@@ -54,6 +85,9 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
         }
 
         let pid = app.processIdentifier
+        let appName = app.localizedName ?? bundleId
+        let minimizedInSnapshots = snapshots.filter { $0.isMinimized }.count
+        devLog("Processing \(appName): \(snapshots.count) saved windows (\(minimizedInSnapshots) minimized)")
 
         // Get AXUIElement for the application
         let appElement = AXUIElementCreateApplication(pid)
@@ -122,7 +156,8 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             if let (snapshotIndex, snapshot) = matchResult {
                 usedSnapshotIndices.insert(snapshotIndex)
                 let matchType = (currentWindow.windowIdentifier != nil && snapshot.windowIdentifier != nil && currentWindow.windowIdentifier == snapshot.windowIdentifier) ? "windowId" : "title"
-                logger.info("Matched (\(matchType)): \"\(currentWindow.title)\" current=(\(Int(currentWindow.frame.origin.x)),\(Int(currentWindow.frame.origin.y)) \(Int(currentWindow.frame.width))x\(Int(currentWindow.frame.height))) -> target=(\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))")
+                let minimizedInfo = snapshot.isMinimized ? " [should minimize]" : ""
+                devLog("Matched (\(matchType)): \"\(currentWindow.title)\"\(minimizedInfo)")
                 let restoreResult = positionWindow(window: currentWindow.element, snapshot: snapshot)
                 results.append(restoreResult)
             }
@@ -226,13 +261,17 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
 
         let success = positionResult == .success && sizeResult == .success
         if success {
-            let minimizedStatus = snapshot.isMinimized ? " (minimized)" : ""
-            logger.info("Positioned: \"\(snapshot.windowTitle)\" to (\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))\(minimizedStatus)")
-            if minimizedResult != .success {
-                logger.warning("Failed to set minimized state for: \"\(snapshot.windowTitle)\" err=\(minimizedResult.rawValue)")
+            let minimizedStatus = snapshot.isMinimized ? " (minimizing)" : ""
+            devLog("Positioned: \"\(snapshot.windowTitle)\" to (\(Int(snapshot.frame.origin.x)),\(Int(snapshot.frame.origin.y)) \(Int(snapshot.frame.width))x\(Int(snapshot.frame.height)))\(minimizedStatus)")
+            if snapshot.isMinimized {
+                if minimizedResult == .success {
+                    devLog("  -> Minimized successfully")
+                } else {
+                    devLog("  -> FAILED to minimize: err=\(minimizedResult.rawValue)")
+                }
             }
         } else {
-            logger.error("Failed to position: \"\(snapshot.windowTitle)\" posErr=\(positionResult.rawValue) sizeErr=\(sizeResult.rawValue)")
+            devLog("FAILED to position: \"\(snapshot.windowTitle)\" posErr=\(positionResult.rawValue) sizeErr=\(sizeResult.rawValue)")
         }
         return WindowRestoreResult(
             snapshot: snapshot,
