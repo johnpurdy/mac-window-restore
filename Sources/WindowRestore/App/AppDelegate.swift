@@ -73,6 +73,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let displayInfoProvider = DisplayInfoProvider()
     private let windowEnumerator: WindowEnumerator
     private let windowPositioner = WindowPositioner()
+    private let saveFeedbackHUD = SaveFeedbackHUD()
 
     private var isSavingPaused: Bool = false
 
@@ -188,6 +189,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 log("Keyboard shortcut triggered: save")
                 Task { @MainActor in
                     self?.saveWindowPositions()
+                    self?.saveFeedbackHUD.show()
                 }
             }
         )
@@ -536,6 +538,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func saveNow(_ sender: Any?) {
         log("Save menu item clicked")
         saveWindowPositions()
+        saveFeedbackHUD.show()
     }
 
     @objc private func restoreNow(_ sender: Any?) {
