@@ -13,7 +13,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "WindowRestore",
-            dependencies: ["KeyboardShortcuts"]
+            dependencies: ["KeyboardShortcuts"],
+            exclude: ["Services/Legacy"]
         ),
         .testTarget(
             name: "WindowRestoreTests",
