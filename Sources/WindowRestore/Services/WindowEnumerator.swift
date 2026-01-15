@@ -12,6 +12,7 @@ public protocol WindowEnumerating: Sendable {
 
 public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
     private let displayInfoProvider: DisplayInfoProviding
+    private let tabEnumerator = TabEnumerator()
 
     public init(displayInfoProvider: DisplayInfoProviding = DisplayInfoProvider()) {
         self.displayInfoProvider = displayInfoProvider
@@ -38,6 +39,9 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
             // Get all windows for this app via Accessibility API (includes minimized)
             let axWindows = getAXWindows(pid: pid)
 
+            // Check if this app supports tab enumeration
+            let supportsTabs = TabEnumerator.supportsTabEnumeration(bundleIdentifier: bundleIdentifier)
+
             for axWindow in axWindows {
                 // Skip windows with empty titles - can't reliably match them on restore
                 if axWindow.title.isEmpty {
@@ -59,6 +63,17 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                     cgWindows: cgWindows
                 )
 
+                // Extract tabs for browser windows
+                var tabs: [String]? = nil
+                if supportsTabs {
+                    tabs = tabEnumerator.extractTabs(from: axWindow.element)
+                    if let extractedTabs = tabs {
+                        logger.info("Extracted \(extractedTabs.count) tabs for \(appName) window: \(axWindow.title)")
+                    } else {
+                        logger.warning("Failed to extract tabs for \(appName) window: \(axWindow.title)")
+                    }
+                }
+
                 let snapshot = WindowSnapshot(
                     applicationBundleIdentifier: bundleIdentifier,
                     applicationName: appName,
@@ -66,7 +81,8 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                     displayIdentifier: displayIdentifier,
                     frame: axWindow.frame,
                     isMinimized: axWindow.isMinimized,
-                    windowIdentifier: windowIdentifier
+                    windowIdentifier: windowIdentifier,
+                    tabs: tabs
                 )
 
                 snapshots.append(snapshot)
@@ -76,7 +92,7 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
         return snapshots
     }
 
-    private func getAXWindows(pid: pid_t) -> [(title: String, frame: CGRect, isMinimized: Bool)] {
+    private func getAXWindows(pid: pid_t) -> [(element: AXUIElement, title: String, frame: CGRect, isMinimized: Bool)] {
         let appElement = AXUIElementCreateApplication(pid)
 
         var windowsRef: CFTypeRef?
@@ -94,7 +110,7 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
             return []
         }
 
-        return windows.compactMap { window -> (title: String, frame: CGRect, isMinimized: Bool)? in
+        return windows.compactMap { window -> (element: AXUIElement, title: String, frame: CGRect, isMinimized: Bool)? in
             // Get title
             var titleRef: CFTypeRef?
             AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
@@ -125,7 +141,7 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
 
             let frame = CGRect(origin: position, size: size)
 
-            return (title: title, frame: frame, isMinimized: isMinimized)
+            return (element: window, title: title, frame: frame, isMinimized: isMinimized)
         }
     }
 

@@ -53,6 +53,9 @@ private let restoreOnConnectKey = "RestoreOnConnectEnabled"
 private let restoreOnDisconnectKey = "RestoreOnDisconnectEnabled"
 private let restoreOnSpaceChangeKey = "RestoreOnSpaceChangeEnabled"
 
+// Debounce delay after display changes before allowing saves (seconds)
+private let saveDebounceAfterDisplayChange: TimeInterval = 60.0
+
 // Available stale window thresholds (in days)
 private let staleThresholdOptions: [(label: String, days: Int)] = [
     ("1 day", 1),
@@ -76,8 +79,10 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private let windowEnumerator: WindowEnumerator
     private let windowPositioner = WindowPositioner()
     private let saveFeedbackHUD = SaveFeedbackHUD()
+    private let windowContentExplorer = WindowContentExplorer()
 
     private var isSavingPaused: Bool = false
+    private var saveDebounceUntil: Date?
 
     private var currentSaveInterval: TimeInterval {
         get {
@@ -386,6 +391,29 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         viewLogsItem.target = self
         menu.addItem(viewLogsItem)
 
+        // Debug menu
+        let debugItem = NSMenuItem(title: "Debug", action: nil, keyEquivalent: "")
+        let debugSubmenu = NSMenu()
+
+        let exploreBrowsersItem = NSMenuItem(
+            title: "Explore Browser Window Contents",
+            action: #selector(exploreBrowserWindowContents),
+            keyEquivalent: ""
+        )
+        exploreBrowsersItem.target = self
+        debugSubmenu.addItem(exploreBrowsersItem)
+
+        let exploreVSCodeItem = NSMenuItem(
+            title: "Explore VS Code Window Contents",
+            action: #selector(exploreVSCodeWindowContents),
+            keyEquivalent: ""
+        )
+        exploreVSCodeItem.target = self
+        debugSubmenu.addItem(exploreVSCodeItem)
+
+        debugItem.submenu = debugSubmenu
+        menu.addItem(debugItem)
+
         let aboutItem = NSMenuItem(
             title: "About Window Restore",
             action: #selector(showAbout),
@@ -438,15 +466,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                 Task { @MainActor in
                     guard let self = self else { return }
 
-                    // Restore on monitor connect
+                    // Set debounce to prevent auto-save from overwriting restored state
+                    self.saveDebounceUntil = Date().addingTimeInterval(saveDebounceAfterDisplayChange)
+                    log("Display changed - save debounce active for \(Int(saveDebounceAfterDisplayChange))s")
+
+                    // Restore on monitor connect (5s delay for CGWindowList to stabilize)
                     if newCount > oldCount && self.isRestoreOnConnectEnabled {
-                        try? await Task.sleep(for: .seconds(1))
+                        try? await Task.sleep(for: .seconds(5))
                         self.restoreWindowPositions()
                     }
 
-                    // Restore on monitor disconnect
+                    // Restore on monitor disconnect (10s delay for apps to finish processing display change)
                     if newCount < oldCount && self.isRestoreOnDisconnectEnabled {
-                        try? await Task.sleep(for: .seconds(1))
+                        try? await Task.sleep(for: .seconds(10))
                         self.restoreWindowPositions()
                     }
                 }
@@ -475,6 +507,13 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Save & Restore
 
     private func saveWindowPositions() {
+        // Check if we're in a debounce period after display change
+        if let debounceUntil = saveDebounceUntil, Date() < debounceUntil {
+            let remaining = Int(debounceUntil.timeIntervalSinceNow)
+            log("Save skipped - debounce active (\(remaining)s remaining)")
+            return
+        }
+
         log("Starting save...")
         let currentWindows = windowEnumerator.enumerateWindows()
         log("Enumerated \(currentWindows.count) windows")
@@ -736,5 +775,19 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func quit(_ sender: Any?) {
         NSApplication.shared.terminate(nil)
+    }
+
+    // MARK: - Debug Actions
+
+    @objc private func exploreBrowserWindowContents(_ sender: Any?) {
+        log("Exploring browser window contents...")
+        windowContentExplorer.exploreBrowserWindows()
+        log("Browser exploration complete - check Console.app or terminal output")
+    }
+
+    @objc private func exploreVSCodeWindowContents(_ sender: Any?) {
+        log("Exploring VS Code window contents...")
+        windowContentExplorer.exploreVSCodeWindows()
+        log("VS Code exploration complete - check Console.app or terminal output")
     }
 }
