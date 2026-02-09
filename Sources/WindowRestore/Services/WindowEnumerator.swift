@@ -30,6 +30,7 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
         }
 
         var snapshots: [WindowSnapshot] = []
+        var usedCGWindowIds: Set<Int> = []
 
         for app in runningApps {
             guard let bundleIdentifier = app.bundleIdentifier else { continue }
@@ -57,11 +58,16 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                 let displayIdentifier = findDisplayForWindow(frame: axWindow.frame, displays: displays)
 
                 // Correlate with CGWindowList to get windowIdentifier
+                // Track used IDs to avoid assigning the same ID to multiple windows
                 let windowIdentifier = findCGWindowIdentifier(
                     pid: pid,
                     frame: axWindow.frame,
-                    cgWindows: cgWindows
+                    cgWindows: cgWindows,
+                    excludedIds: usedCGWindowIds
                 )
+                if let assignedId = windowIdentifier {
+                    usedCGWindowIds.insert(assignedId)
+                }
 
                 // Extract tabs for browser windows
                 var tabs: [String]? = nil
@@ -194,14 +200,19 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
     private func findCGWindowIdentifier(
         pid: pid_t,
         frame: CGRect,
-        cgWindows: [(windowIdentifier: Int, pid: pid_t, bounds: CGRect)]
+        cgWindows: [(windowIdentifier: Int, pid: pid_t, bounds: CGRect)],
+        excludedIds: Set<Int>
     ) -> Int? {
         // Filter to windows from the same process
         let processWindows = cgWindows.filter { $0.pid == pid }
 
         // Find a window with matching bounds (allowing small tolerance for rounding)
+        // Skip IDs that have already been assigned to other windows
         let tolerance: CGFloat = 2.0
         for cgWindow in processWindows {
+            if excludedIds.contains(cgWindow.windowIdentifier) {
+                continue
+            }
             if abs(cgWindow.bounds.origin.x - frame.origin.x) <= tolerance &&
                abs(cgWindow.bounds.origin.y - frame.origin.y) <= tolerance &&
                abs(cgWindow.bounds.width - frame.width) <= tolerance &&

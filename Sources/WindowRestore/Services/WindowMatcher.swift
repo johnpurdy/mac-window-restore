@@ -108,7 +108,7 @@ public final class WindowMatcher: Sendable {
             // Strategy 3: Tab matching (for tab-enabled apps only)
             if config.isTabEnabledApp(bundleId) {
                 // Find best tab matches - pair saved windows with current windows by highest overlap
-                var tabMatches: [(savedIndex: Int, currentIndex: Int, saved: WindowSnapshot, current: CurrentWindow, overlap: Double)] = []
+                var tabMatches: [(savedIndex: Int, currentIndex: Int, saved: WindowSnapshot, current: CurrentWindow, overlap: Double, titleMatches: Bool)] = []
 
                 for savedItem in availableSaved {
                     guard let savedTabs = savedItem.1.tabs, !savedTabs.isEmpty else { continue }
@@ -119,19 +119,27 @@ public final class WindowMatcher: Sendable {
 
                         let overlap = calculateTabOverlap(savedTabs: savedTabs, currentTabs: currentTabs)
                         if overlap >= config.tabMatchThreshold {
+                            let titleMatches = savedItem.1.windowTitle == currentItem.1.title
                             tabMatches.append((
                                 savedIndex: savedItem.0,
                                 currentIndex: currentItem.0,
                                 saved: savedItem.1,
                                 current: currentItem.1,
-                                overlap: overlap
+                                overlap: overlap,
+                                titleMatches: titleMatches
                             ))
                         }
                     }
                 }
 
-                // Sort by overlap descending and greedily assign best matches
-                tabMatches.sort { $0.overlap > $1.overlap }
+                // Sort by overlap descending, then by title match as tiebreaker
+                tabMatches.sort {
+                    if $0.overlap != $1.overlap {
+                        return $0.overlap > $1.overlap
+                    }
+                    // When overlap is equal, prefer matches where title also matches
+                    return $0.titleMatches && !$1.titleMatches
+                }
 
                 for tabMatch in tabMatches {
                     guard !usedSavedIndices.contains(tabMatch.savedIndex),

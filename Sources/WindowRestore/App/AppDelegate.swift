@@ -83,6 +83,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var isSavingPaused: Bool = false
     private var saveDebounceUntil: Date?
+    private var lastSavedConfigId: String?
 
     private var currentSaveInterval: TimeInterval {
         get {
@@ -538,6 +539,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
         do {
             try persistenceService.save(configuration: configuration)
+            lastSavedConfigId = configId
             log("Save successful")
         } catch {
             log("Failed to save: \(error.localizedDescription)")
@@ -551,10 +553,18 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             return currentWindows
         }
 
+        // Detect if display configuration changed since last save
+        // When this happens, all CGWindowIDs are invalid and we must match by tabs/title
+        let displayConfigChanged = (lastSavedConfigId != nil) && (lastSavedConfigId != configId)
+        if displayConfigChanged {
+            log("Display config changed from \(lastSavedConfigId ?? "nil") to \(configId) - using tab/title matching")
+        }
+
         return WindowMerger.merge(
             currentWindows: currentWindows,
             existingWindows: existingConfig.windows,
-            staleThreshold: currentStaleThreshold
+            staleThreshold: currentStaleThreshold,
+            displayConfigChanged: displayConfigChanged
         )
     }
 
