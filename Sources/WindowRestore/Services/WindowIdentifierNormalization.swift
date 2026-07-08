@@ -37,7 +37,7 @@ public enum WindowIdentifierNormalization {
     /// mapped to `nil` while every other field and the order are left unchanged.
     public static func normalizeDuplicates(_ raws: [RawWindow]) -> [RawWindow] {
         let normalized = normalizedIdentifiers(raws.map { $0.windowIdentifier })
-        return zip(raws, normalized).map { $0.withWindowIdentifier($1) }
+        return zip(raws, normalized).map { raw, identifier in raw.withWindowIdentifier(identifier) }
     }
 
     /// Value-preserving normalization for restore records: duplicated non-nil identifiers
