@@ -31,19 +31,27 @@ codesign --force --deep --options runtime --sign "Developer ID Application: John
 ## Architecture
 
 ```
-Sources/WindowRestore/
-├── App/                    # Entry point and menu bar
-├── Models/                 # Data structures (Codable, Sendable)
-└── Services/               # Business logic
+Sources/
+├── CAXWindowID/            # C shim exposing the private _AXUIElementGetWindow symbol
+└── WindowRestore/
+    ├── App/                # Entry point and menu bar
+    ├── Models/             # Data structures (Codable, Sendable)
+    └── Services/           # Business logic
 ```
 
 ### Key Services
 
 | Service | Responsibility |
 |---------|----------------|
-| `WindowEnumerator` | Gets all windows via Accessibility API + CGWindowList (includes minimized, captures windowIdentifier) |
-| `WindowPositioner` | Moves windows via AXUIElement, matches by windowIdentifier first then title |
-| `WindowMerger` | Merges windows by windowIdentifier (or title fallback), prunes stale entries |
+| `WindowIdentifierResolver` | Resolves the exact CGWindowID for an `AXUIElement` via `_AXUIElementGetWindow` (returns nil, never a guess, on failure/null id) |
+| `RawWindowProvider` | Save-side AX enumeration: gathers windows, resolves ids, extracts tabs, normalizes duplicate ids (`RawWindowProviding` seam) |
+| `CurrentWindowProvider` | Restore-side AX enumeration: binds each live `AXUIElement` to its resolved `CurrentWindow` (`CurrentWindowProviding` seam) |
+| `WindowEnumerator` | Maps raw windows to `WindowSnapshot`s; owns the empty-title / zero-size persistence filters and display assignment |
+| `WindowMatcher` | Matches saved snapshots to current windows (id → tabs → title), returning the matched `currentIndex` and match reason |
+| `WindowPositioner` | Moves the matcher-selected element by index via the `WindowElementPositioning` effect seam; restores minimized state |
+| `WindowElementPositioning` | Effect seam wrapping the AX position/size/minimize calls (result type preserves error codes) |
+| `WindowIdentifierNormalization` | Pure helper that neutralizes duplicate non-nil ids to nil (shared by both providers) |
+| `WindowMerger` | Merges windows by windowIdentifier (or tabs/title fallback), prunes stale entries |
 | `DisplayMonitor` | Detects monitor connect/disconnect |
 | `PersistenceService` | JSON storage to ~/Library/Application Support/WindowRestore/ |
 | `SnapshotScheduler` | Configurable save timer (15s, 30s, 1min, 2min, 5min) |
@@ -52,8 +60,8 @@ Sources/WindowRestore/
 
 ### Data Flow
 
-1. **Save**: `SnapshotScheduler` → `WindowEnumerator` → `WindowMerger` → `PersistenceService`
-2. **Restore**: `DisplayMonitor` or hotkey → `RestoreCoordinator` → `WindowPositioner`
+1. **Save**: `SnapshotScheduler` → `WindowEnumerator` (← `RawWindowProvider` ← `WindowIdentifierResolver`) → `WindowMerger` → `PersistenceService`
+2. **Restore**: `DisplayMonitor` or hotkey → `RestoreCoordinator` → `WindowPositioner` (← `CurrentWindowProvider` ← `WindowIdentifierResolver`; matches via `WindowMatcher`, moves via `WindowElementPositioning`)
 
 ### Key Models
 
@@ -79,7 +87,7 @@ Sources/WindowRestore/
 | Multi-desktop support | Merge preserves windows from other desktops |
 | Stale cleanup | `WindowMerger` filters by `lastSeenAt` timestamp |
 | Minimized state tracking | `WindowEnumerator` reads `kAXMinimizedAttribute`, `WindowPositioner` restores it |
-| CGWindowID tracking | Windows identified by stable CGWindowID, with title fallback for legacy configs |
+| CGWindowID tracking | Windows identified by exact CGWindowID from `_AXUIElementGetWindow` (via `CAXWindowID`), with tab/title fallback when id is nil |
 
 ## Code Conventions
 
@@ -87,13 +95,14 @@ Sources/WindowRestore/
 
 - All models are `Sendable`
 - `AppDelegate` is `@MainActor`
-- Services use `@unchecked Sendable` with internal synchronization where needed
+- Stateless services prefer compiler-verified `Sendable`; `@unchecked Sendable` is used only where internal synchronization is required
+- The private `AXUIElement` boundary uses `@preconcurrency import ApplicationServices` (providers run off the main thread, so `@MainActor` isolation would be wrong)
 - Callbacks in schedulers/monitors use `@Sendable` closures
 
 ### Patterns
 
-- Protocols for testability (`WindowEnumerating`, `WindowPositioning`, `DisplayInfoProviding`)
-- Dependency injection via initializers
+- Protocols for testability (`WindowEnumerating`, `WindowPositioning`, `DisplayInfoProviding`, `WindowIdentifierResolving`, `RawWindowProviding`, `CurrentWindowProviding`, `WindowElementPositioning`)
+- Dependency injection via initializers (the AX-touching seams let save/restore logic be unit-tested with fakes)
 - No singletons
 - Logging via `os.Logger` (viewable in Console.app, subsystem: `com.windowrestore.app`)
 
@@ -109,7 +118,7 @@ Sources/WindowRestore/
 | API | Purpose |
 |-----|---------|
 | `AXUIElement` | Get window titles/minimized state, move/resize/minimize windows |
-| `CGWindowListCopyWindowInfo` | Get CGWindowID for stable window identification |
+| `_AXUIElementGetWindow` (private) | Get the exact CGWindowID for an `AXUIElement`; isolated in the `CAXWindowID` C target (no `@_silgen_name`) |
 | `NSWorkspace.runningApplications` | Enumerate running apps for window enumeration |
 | `KeyboardShortcuts` (library) | Configurable global hotkeys |
 | `NSApplication.didChangeScreenParametersNotification` | Detect monitor changes |
@@ -122,7 +131,7 @@ Sources/WindowRestore/
 
 2. **Developer ID signing** - Use `codesign --force --deep --options runtime --sign "Developer ID Application: ..."` to preserve accessibility permissions across updates
 
-3. **Window matching** - Windows are matched by CGWindowID first (stable identifier), then by title as fallback. CGWindowID doesn't change when browser tabs switch, solving the multi-tab browser problem.
+3. **Window matching** - Windows are matched by CGWindowID first (stable identifier), then by tab overlap (browsers), then by title as fallback. On restore, `WindowMatcher` returns the matched `currentIndex` so `WindowPositioner` moves the exact selected window (optional ids are never compared, avoiding `nil == nil` collisions). CGWindowID doesn't change when browser tabs switch, solving the multi-tab browser problem.
 
 4. **Display identification** - Displays are identified by a hash of vendor/model/serial number, not display ID (which changes).
 
@@ -132,4 +141,4 @@ Sources/WindowRestore/
 
 7. **Minimized state tracking** - Windows have an `isMinimized` field. Each monitor config saves its own minimized states. On restore, windows are minimized/unminimized to match the saved state. Legacy JSON without `isMinimized` defaults to `false`.
 
-8. **CGWindowID tracking** - Windows have a `windowIdentifier` field (CGWindowID). This stable ID is obtained by correlating AXUIElement windows with CGWindowList entries by PID + frame position. CGWindowID persists across tab switches in browsers. Legacy JSON without `windowIdentifier` uses title-based matching as fallback.
+8. **CGWindowID tracking** - Windows have a `windowIdentifier` field (CGWindowID). This exact id is obtained directly from the window's `AXUIElement` via the private `_AXUIElementGetWindow` (isolated in the `CAXWindowID` C target), not by frame matching — so windows stacked at the same position get distinct ids. If resolution fails or returns a null id, `windowIdentifier` is stored as nil (missing is safer than wrong), and duplicate non-nil ids from one pass are normalized to nil. CGWindowID persists across tab switches in browsers. Legacy/nil `windowIdentifier` falls back to tab/title matching.
