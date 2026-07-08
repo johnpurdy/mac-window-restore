@@ -14,3 +14,10 @@ AppIcon.iconset/
 
 # Local Claude Code settings (machine-specific permissions)
 .claude/settings.local.json
+
+# Scratch / temp working files
+.tmp/
+
+# Generated spec-review assessment documents
+specs/*-assessment.md
+specs/*-assessment-pass*.md
