@@ -178,6 +178,47 @@ struct WindowEnumeratorTests {
         #expect(windows.count == 2)
         #expect(windows[0].windowIdentifier != windows[1].windowIdentifier)
     }
+
+    // MARK: - Cycle 2: production enumerator over a fake raw-window provider
+
+    @Test("Enumerator carries resolver ids verbatim and drops empty-title / zero-size windows")
+    func mapsRawWindowsCarryingIdsAndFilteringJunk() {
+        let frame = CGRect(x: 65, y: 51, width: 1514, height: 1049)
+        let provider = FakeRawWindowProvider(raws: [
+            RawWindow(bundleIdentifier: "com.microsoft.edgemac", applicationName: "Microsoft Edge",
+                      title: "Window A", frame: frame, isMinimized: false, windowIdentifier: 252, tabs: nil),
+            RawWindow(bundleIdentifier: "com.microsoft.edgemac", applicationName: "Microsoft Edge",
+                      title: "Window B", frame: frame, isMinimized: false, windowIdentifier: 352, tabs: nil),
+            RawWindow(bundleIdentifier: "com.microsoft.edgemac", applicationName: "Microsoft Edge",
+                      title: "Window C", frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                      isMinimized: false, windowIdentifier: nil, tabs: nil),
+            RawWindow(bundleIdentifier: "com.microsoft.edgemac", applicationName: "Microsoft Edge",
+                      title: "", frame: frame, isMinimized: false, windowIdentifier: 999, tabs: nil),
+            RawWindow(bundleIdentifier: "com.microsoft.edgemac", applicationName: "Microsoft Edge",
+                      title: "Zero", frame: CGRect(x: 10, y: 10, width: 0, height: 0),
+                      isMinimized: false, windowIdentifier: 888, tabs: nil)
+        ])
+
+        let enumerator = WindowEnumerator(
+            displayInfoProvider: FakeDisplayInfoProvider(),
+            rawWindowProvider: provider
+        )
+
+        let windows = enumerator.enumerateWindows()
+
+        // Empty-title and zero-size windows are dropped; the other three survive.
+        #expect(windows.count == 3)
+        #expect(windows.allSatisfy { !$0.windowTitle.isEmpty })
+        #expect(windows.allSatisfy { $0.frame.width > 0 && $0.frame.height > 0 })
+
+        let ids = windows.map { $0.windowIdentifier }
+        #expect(ids.contains(252))
+        #expect(ids.contains(352))
+        #expect(ids.contains(where: { $0 == nil }))
+        // The junk windows' ids must not appear.
+        #expect(!ids.contains(999))
+        #expect(!ids.contains(888))
+    }
 }
 
 // Mock implementation for testing
@@ -187,4 +228,18 @@ final class MockWindowEnumerator: WindowEnumerating, @unchecked Sendable {
     func enumerateWindows() -> [WindowSnapshot] {
         return mockWindows
     }
+}
+
+final class FakeRawWindowProvider: RawWindowProviding, @unchecked Sendable {
+    let raws: [RawWindow]
+    init(raws: [RawWindow]) { self.raws = raws }
+    func rawWindows() -> [RawWindow] { raws }
+}
+
+final class FakeDisplayInfoProvider: DisplayInfoProviding, @unchecked Sendable {
+    func getDisplays() -> [DisplayInfo] {
+        [DisplayInfo(identifier: "display-1", name: "Test",
+                     resolution: CGSize(width: 5000, height: 5000), position: .zero)]
+    }
+    func getCurrentConfigurationIdentifier() -> String { "config-test" }
 }

@@ -1,8 +1,10 @@
 import Foundation
 import ApplicationServices
 
-/// Extracts tab information from browser windows via Accessibility API
-public final class TabEnumerator {
+/// Extracts tab information from browser windows via Accessibility API.
+/// Stateless, so it is safely `Sendable` (it lets providers be compiler-verified
+/// `Sendable` rather than `@unchecked`).
+public final class TabEnumerator: Sendable {
 
     public init() {}
 

@@ -266,4 +266,54 @@ struct WindowMergerTests {
         #expect(windowIds.contains(11111))
         #expect(windowIds.contains(22222))
     }
+
+    // MARK: - Cycle 0 Guard: stacked same-frame same-title windows
+
+    @Test("Merge keys by windowIdentifier for identical frames and titles, no duplicates or swap")
+    func mergeKeysByIdentifierForIdenticalFramesAndTitles() {
+        let config = AppMatchingConfig(
+            multiWindowApps: ["com.microsoft.edgemac"],
+            tabEnabledApps: [],
+            tabMatchThreshold: 0.5
+        )
+        let sevenDayThreshold: TimeInterval = 7 * 24 * 3600
+        let sharedFrame = CGRect(x: 65, y: 51, width: 1514, height: 1049)
+        let sharedTitle = "trustforge - Microsoft Edge - Trust Forge - Admin"
+
+        let existingWindows = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.microsoft.edgemac",
+                applicationName: "Microsoft Edge",
+                windowTitle: sharedTitle,
+                displayIdentifier: "display-1",
+                frame: sharedFrame,
+                lastSeenAt: Date(),
+                windowIdentifier: 252
+            ),
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.microsoft.edgemac",
+                applicationName: "Microsoft Edge",
+                windowTitle: sharedTitle,
+                displayIdentifier: "display-1",
+                frame: sharedFrame,
+                lastSeenAt: Date(),
+                windowIdentifier: 352
+            )
+        ]
+
+        let currentWindows = existingWindows  // same ids, freshly seen
+
+        let merged = WindowMerger.merge(
+            currentWindows: currentWindows,
+            existingWindows: existingWindows,
+            staleThreshold: sevenDayThreshold,
+            displayConfigChanged: false,
+            config: config
+        )
+
+        // In-place replacement by id: exactly two windows, ids preserved, no duplicates.
+        #expect(merged.count == 2)
+        let windowIds = merged.compactMap { $0.windowIdentifier }.sorted()
+        #expect(windowIds == [252, 352])
+    }
 }

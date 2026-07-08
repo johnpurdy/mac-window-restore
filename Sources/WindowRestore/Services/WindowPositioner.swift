@@ -1,7 +1,7 @@
 import Foundation
 import CoreGraphics
 import AppKit
-import ApplicationServices
+@preconcurrency import ApplicationServices
 import os
 
 private let logger = Logger(subsystem: "com.windowrestore.app", category: "restore")
@@ -47,232 +47,107 @@ public struct WindowRestoreResult: Sendable {
     }
 }
 
-/// Restores windows to saved positions using matching strategies from AppMatchingConfig
+/// A single restore action: move `record.element` to `snapshot`'s frame/minimized state.
+private struct RestoreStep {
+    let snapshot: WindowSnapshot
+    let record: CurrentWindowRecord
+    let reason: WindowMatchReason
+}
+
+/// Restores windows to saved positions.
+///
+/// Identity comes from the exact CGWindowID resolved by `CurrentWindowProvider`; the
+/// matcher returns the index of the chosen current record, so the element that is moved is
+/// exactly the one the matcher selected — there is no post-match re-lookup that could pick
+/// the wrong window when identifiers are nil.
 public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
     private let config: AppMatchingConfig
-    private let tabEnumerator = TabEnumerator()
+    private let currentWindowProvider: CurrentWindowProviding
+    private let elementPositioning: WindowElementPositioning
 
-    public init(config: AppMatchingConfig = AppMatchingConfig.loadOrDefault()) {
+    public init(
+        config: AppMatchingConfig = AppMatchingConfig.loadOrDefault(),
+        currentWindowProvider: CurrentWindowProviding = CurrentWindowProvider(),
+        elementPositioning: WindowElementPositioning = AXWindowElementPositioner()
+    ) {
         self.config = config
+        self.currentWindowProvider = currentWindowProvider
+        self.elementPositioning = elementPositioning
     }
 
     public func restoreWindows(snapshots: [WindowSnapshot]) -> [WindowRestoreResult] {
         let minimizedCount = snapshots.filter { $0.isMinimized }.count
         log("Starting restore: \(snapshots.count) windows (\(minimizedCount) should be minimized)")
 
-        // Get all current windows
-        let currentWindows = getCurrentWindows(for: snapshots)
-        log("Found \(currentWindows.count) current windows")
+        // Gather live windows, keeping each AX element bound to its resolved identity.
+        let bundleIdentifiers = Set(snapshots.map { $0.applicationBundleIdentifier })
+        let records = currentWindowProvider.currentWindows(forBundleIdentifiers: bundleIdentifiers)
+        log("Found \(records.count) current windows")
 
-        // Use WindowMatcher to find matches
+        // Match, then build a plan that carries the exact selected record through.
         let matcher = WindowMatcher(config: config)
-        let matches = matcher.findMatches(saved: snapshots, current: currentWindows.map { $0.currentWindow })
+        let matches = matcher.findMatches(saved: snapshots, current: records.map { $0.currentWindow })
+        let plan = matches.map { match in
+            RestoreStep(snapshot: match.saved, record: records[match.currentIndex], reason: match.reason)
+        }
 
-        log("Matched \(matches.count) windows")
+        logMatchSummary(plan: plan, savedCount: snapshots.count, currentCount: records.count)
 
         var results: [WindowRestoreResult] = []
         var windowsNeedingMinimizeRetry: [(element: AXUIElement, snapshot: WindowSnapshot)] = []
 
-        // Position each matched window
-        for match in matches {
-            // Find the AXUIElement for this current window
-            guard let windowInfo = currentWindows.first(where: {
-                $0.currentWindow.windowIdentifier == match.current.windowIdentifier ||
-                ($0.currentWindow.title == match.current.title && $0.currentWindow.frame == match.current.frame)
-            }) else {
-                continue
-            }
+        for step in plan {
+            let savedId = step.snapshot.windowIdentifier.map(String.init) ?? "nil"
+            let currentId = step.record.currentWindow.windowIdentifier.map(String.init) ?? "nil"
+            log("Restoring: \"\(step.snapshot.windowTitle)\" [id \(savedId)] matched to "
+                + "\"\(step.record.currentWindow.title)\" [id \(currentId)] via \(step.reason.rawValue)")
 
-            log("Restoring: \"\(match.saved.windowTitle)\" matched to \"\(match.current.title)\"")
+            let positionResult = elementPositioning.position(step.record.element, to: step.snapshot.frame)
+            results.append(WindowRestoreResult(
+                snapshot: step.snapshot,
+                success: positionResult.positioned,
+                error: positionResult.positioned ? nil : positionErrorText(positionResult)
+            ))
 
-            // Position the window
-            let result = positionWindow(window: windowInfo.element, snapshot: match.saved)
-            results.append(result)
-
-            // Handle minimize state
-            let minimizeSuccess = setMinimizeStateWithVerification(window: windowInfo.element, snapshot: match.saved)
-            if !minimizeSuccess {
-                windowsNeedingMinimizeRetry.append((element: windowInfo.element, snapshot: match.saved))
+            if !elementPositioning.setMinimized(step.record.element, step.snapshot.isMinimized) {
+                windowsNeedingMinimizeRetry.append((element: step.record.element, snapshot: step.snapshot))
             }
         }
 
         log("Restore complete: \(results.filter { $0.success }.count)/\(results.count) windows positioned")
 
-        // Retry minimize for windows that failed
         if !windowsNeedingMinimizeRetry.isEmpty {
             log("Retrying minimize for \(windowsNeedingMinimizeRetry.count) windows...")
-            retryMinimizeWithVerification(windows: windowsNeedingMinimizeRetry)
+            retryMinimize(windows: windowsNeedingMinimizeRetry)
         }
 
         return results
     }
 
-    // MARK: - Get Current Windows
-
-    private func getCurrentWindows(for snapshots: [WindowSnapshot]) -> [(element: AXUIElement, currentWindow: CurrentWindow)] {
-        var results: [(element: AXUIElement, currentWindow: CurrentWindow)] = []
-
-        // Get unique bundle IDs from snapshots
-        let bundleIds = Set(snapshots.map { $0.applicationBundleIdentifier })
-
-        for bundleId in bundleIds {
-            guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first else {
-                continue
-            }
-
-            let pid = app.processIdentifier
-            let appElement = AXUIElementCreateApplication(pid)
-
-            // Get windows
-            var windowsRef: CFTypeRef?
-            let axResult = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
-            guard axResult == .success, let windows = windowsRef as? [AXUIElement] else {
-                continue
-            }
-
-            // Get CGWindowList for correlating windowIdentifiers
-            let cgWindows = getCGWindowsForPid(pid)
-            var usedCGWindowIds: Set<Int> = []
-
-            let supportsTabs = config.isTabEnabledApp(bundleId)
-
-            for window in windows {
-                // Get title
-                var titleRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
-                let title = titleRef as? String ?? ""
-
-                // Get position
-                var positionRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef)
-                var position = CGPoint.zero
-                if let positionValue = positionRef, CFGetTypeID(positionValue) == AXValueGetTypeID() {
-                    AXValueGetValue(positionValue as! AXValue, .cgPoint, &position)
-                }
-
-                // Get size
-                var sizeRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
-                var size = CGSize.zero
-                if let sizeValue = sizeRef, CFGetTypeID(sizeValue) == AXValueGetTypeID() {
-                    AXValueGetValue(sizeValue as! AXValue, .cgSize, &size)
-                }
-
-                // Skip zero-size windows
-                guard size.width > 0 && size.height > 0 else { continue }
-
-                let frame = CGRect(origin: position, size: size)
-
-                // Correlate with CGWindowList to get windowIdentifier
-                let windowIdentifier = findCGWindowIdentifier(frame: frame, cgWindows: cgWindows, excludedIds: usedCGWindowIds)
-                if let matchedId = windowIdentifier {
-                    usedCGWindowIds.insert(matchedId)
-                }
-
-                // Extract tabs for browser windows
-                let tabs: [String]? = supportsTabs ? tabEnumerator.extractTabs(from: window) : nil
-
-                let currentWindow = CurrentWindow(
-                    bundleIdentifier: bundleId,
-                    title: title,
-                    frame: frame,
-                    windowIdentifier: windowIdentifier,
-                    tabs: tabs
-                )
-
-                results.append((element: window, currentWindow: currentWindow))
-            }
-        }
-
-        return results
+    private func positionErrorText(_ result: ElementPositionResult) -> String {
+        let position = result.positionError?.rawValue ?? Int32(AXError.success.rawValue)
+        let size = result.sizeError?.rawValue ?? Int32(AXError.success.rawValue)
+        return "Position: \(position), Size: \(size)"
     }
 
-    private func getCGWindowsForPid(_ pid: pid_t) -> [(windowIdentifier: Int, bounds: CGRect)] {
-        let options: CGWindowListOption = [.excludeDesktopElements]
-        guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return []
+    private func logMatchSummary(plan: [RestoreStep], savedCount: Int, currentCount: Int) {
+        var byReason: [WindowMatchReason: Int] = [:]
+        for step in plan {
+            byReason[step.reason, default: 0] += 1
         }
-
-        return windowInfoList.compactMap { windowInfo -> (windowIdentifier: Int, bounds: CGRect)? in
-            guard let windowNumber = windowInfo[kCGWindowNumber as String] as? Int,
-                  let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID == pid,
-                  let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
-                  let x = boundsDict["X"] as? CGFloat,
-                  let y = boundsDict["Y"] as? CGFloat,
-                  let width = boundsDict["Width"] as? CGFloat,
-                  let height = boundsDict["Height"] as? CGFloat else {
-                return nil
-            }
-
-            let bounds = CGRect(x: x, y: y, width: width, height: height)
-            return (windowIdentifier: windowNumber, bounds: bounds)
-        }
+        let unmatchedSaved = savedCount - plan.count
+        let unmatchedCurrent = currentCount - plan.count
+        log("Matched \(plan.count) windows"
+            + " (id: \(byReason[.windowIdentifier, default: 0]),"
+            + " singleWindow: \(byReason[.singleWindow, default: 0]),"
+            + " tabs: \(byReason[.tabs, default: 0]),"
+            + " title: \(byReason[.title, default: 0]));"
+            + " unmatched saved: \(unmatchedSaved), unmatched current: \(unmatchedCurrent)")
     }
 
-    private func findCGWindowIdentifier(frame: CGRect, cgWindows: [(windowIdentifier: Int, bounds: CGRect)], excludedIds: Set<Int>) -> Int? {
-        let tolerance: CGFloat = 2.0
-        for cgWindow in cgWindows {
-            if excludedIds.contains(cgWindow.windowIdentifier) { continue }
-            if abs(cgWindow.bounds.origin.x - frame.origin.x) <= tolerance &&
-               abs(cgWindow.bounds.origin.y - frame.origin.y) <= tolerance &&
-               abs(cgWindow.bounds.width - frame.width) <= tolerance &&
-               abs(cgWindow.bounds.height - frame.height) <= tolerance {
-                return cgWindow.windowIdentifier
-            }
-        }
-        return nil
-    }
+    // MARK: - Minimize Retry
 
-    // MARK: - Position Window
-
-    private func positionWindow(window: AXUIElement, snapshot: WindowSnapshot) -> WindowRestoreResult {
-        // Set position
-        var position = CGPoint(x: snapshot.frame.origin.x, y: snapshot.frame.origin.y)
-        var positionResult: AXError = .failure
-        if let positionValue = AXValueCreate(.cgPoint, &position) {
-            positionResult = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, positionValue)
-        }
-
-        // Set size
-        var size = CGSize(width: snapshot.frame.width, height: snapshot.frame.height)
-        var sizeResult: AXError = .failure
-        if let sizeValue = AXValueCreate(.cgSize, &size) {
-            sizeResult = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
-        }
-
-        let success = positionResult == .success && sizeResult == .success
-        return WindowRestoreResult(
-            snapshot: snapshot,
-            success: success,
-            error: success ? nil : "Position: \(positionResult.rawValue), Size: \(sizeResult.rawValue)"
-        )
-    }
-
-    // MARK: - Minimize State
-
-    private func setMinimizeStateWithVerification(window: AXUIElement, snapshot: WindowSnapshot) -> Bool {
-        var minimizedRef: CFTypeRef?
-        AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef)
-        let currentMinimized = (minimizedRef as? Bool) ?? false
-
-        if currentMinimized == snapshot.isMinimized {
-            return true
-        }
-
-        log("  -> Will \(snapshot.isMinimized ? "minimize" : "unminimize"): \"\(snapshot.windowTitle)\"")
-
-        let targetValue: CFBoolean = snapshot.isMinimized ? kCFBooleanTrue : kCFBooleanFalse
-        AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, targetValue)
-
-        minimizedRef = nil
-        AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &minimizedRef)
-        let newMinimized = (minimizedRef as? Bool) ?? false
-
-        return newMinimized == snapshot.isMinimized
-    }
-
-    private func retryMinimizeWithVerification(windows: [(element: AXUIElement, snapshot: WindowSnapshot)]) {
+    private func retryMinimize(windows: [(element: AXUIElement, snapshot: WindowSnapshot)]) {
         let maxRetries = 10
         let delayBetweenRetries: TimeInterval = 0.5
 
@@ -284,30 +159,9 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             log("Minimize retry attempt \(attempt)/\(maxRetries) for \(remaining.count) windows...")
             Thread.sleep(forTimeInterval: delayBetweenRetries)
 
-            var stillFailing: [(element: AXUIElement, snapshot: WindowSnapshot)] = []
-
-            for (element, snapshot) in remaining {
-                var minimizedRef: CFTypeRef?
-                AXUIElementCopyAttributeValue(element, kAXMinimizedAttribute as CFString, &minimizedRef)
-                let currentMinimized = (minimizedRef as? Bool) ?? false
-
-                if currentMinimized == snapshot.isMinimized {
-                    continue
-                }
-
-                let targetValue: CFBoolean = snapshot.isMinimized ? kCFBooleanTrue : kCFBooleanFalse
-                AXUIElementSetAttributeValue(element, kAXMinimizedAttribute as CFString, targetValue)
-
-                minimizedRef = nil
-                AXUIElementCopyAttributeValue(element, kAXMinimizedAttribute as CFString, &minimizedRef)
-                let newMinimized = (minimizedRef as? Bool) ?? false
-
-                if newMinimized != snapshot.isMinimized {
-                    stillFailing.append((element: element, snapshot: snapshot))
-                }
+            remaining = remaining.filter { element, snapshot in
+                !elementPositioning.setMinimized(element, snapshot.isMinimized)
             }
-
-            remaining = stillFailing
         }
 
         if !remaining.isEmpty {
