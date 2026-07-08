@@ -24,14 +24,38 @@ public struct CurrentWindow: Sendable {
     }
 }
 
-/// A matched pair of saved snapshot and current window
+/// Why a saved window was paired with a current window (for observability, not a
+/// separate strategy). Ordered by the matcher's strategy precedence.
+public enum WindowMatchReason: String, Sendable {
+    case singleWindow
+    case windowIdentifier
+    case tabs
+    case title
+}
+
+/// A matched pair of saved snapshot and current window.
+///
+/// `currentIndex` is the offset into the `current` array passed to `findMatches`, so the
+/// caller can retrieve the exact record (and its `AXUIElement`) without a second lookup.
 public struct WindowMatch: Sendable {
     public let saved: WindowSnapshot
     public let current: CurrentWindow
+    public let savedIndex: Int
+    public let currentIndex: Int
+    public let reason: WindowMatchReason
 
-    public init(saved: WindowSnapshot, current: CurrentWindow) {
+    public init(
+        saved: WindowSnapshot,
+        current: CurrentWindow,
+        savedIndex: Int,
+        currentIndex: Int,
+        reason: WindowMatchReason
+    ) {
         self.saved = saved
         self.current = current
+        self.savedIndex = savedIndex
+        self.currentIndex = currentIndex
+        self.reason = reason
     }
 }
 
@@ -72,7 +96,13 @@ public final class WindowMatcher: Sendable {
                     let savedItem = availableSaved[0]
                     let currentItem = availableCurrent[0]
 
-                    matches.append(WindowMatch(saved: savedItem.1, current: currentItem.1))
+                    matches.append(WindowMatch(
+                        saved: savedItem.1,
+                        current: currentItem.1,
+                        savedIndex: savedItem.0,
+                        currentIndex: currentItem.0,
+                        reason: .singleWindow
+                    ))
                     usedSavedIndices.insert(savedItem.0)
                     usedCurrentIndices.insert(currentItem.0)
                     continue
@@ -96,7 +126,13 @@ public final class WindowMatcher: Sendable {
                     continue
                 }
 
-                matches.append(WindowMatch(saved: savedItem.1, current: currentItem.1))
+                matches.append(WindowMatch(
+                    saved: savedItem.1,
+                    current: currentItem.1,
+                    savedIndex: savedItem.0,
+                    currentIndex: currentItem.0,
+                    reason: .windowIdentifier
+                ))
                 usedSavedIndices.insert(savedItem.0)
                 usedCurrentIndices.insert(currentItem.0)
             }
@@ -145,7 +181,13 @@ public final class WindowMatcher: Sendable {
                     guard !usedSavedIndices.contains(tabMatch.savedIndex),
                           !usedCurrentIndices.contains(tabMatch.currentIndex) else { continue }
 
-                    matches.append(WindowMatch(saved: tabMatch.saved, current: tabMatch.current))
+                    matches.append(WindowMatch(
+                        saved: tabMatch.saved,
+                        current: tabMatch.current,
+                        savedIndex: tabMatch.savedIndex,
+                        currentIndex: tabMatch.currentIndex,
+                        reason: .tabs
+                    ))
                     usedSavedIndices.insert(tabMatch.savedIndex)
                     usedCurrentIndices.insert(tabMatch.currentIndex)
                 }
@@ -169,7 +211,13 @@ public final class WindowMatcher: Sendable {
                     continue
                 }
 
-                matches.append(WindowMatch(saved: savedItem.1, current: currentItem.1))
+                matches.append(WindowMatch(
+                    saved: savedItem.1,
+                    current: currentItem.1,
+                    savedIndex: savedItem.0,
+                    currentIndex: currentItem.0,
+                    reason: .title
+                ))
                 usedSavedIndices.insert(savedItem.0)
                 usedCurrentIndices.insert(currentItem.0)
             }

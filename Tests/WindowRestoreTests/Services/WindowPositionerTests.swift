@@ -1,10 +1,129 @@
 import Testing
 import Foundation
 import CoreGraphics
+import ApplicationServices
 @testable import WindowRestore
 
 @Suite("WindowPositioner Tests")
 struct WindowPositionerTests {
+
+    // MARK: - Cycle 3: restore selects the matcher's window even when ids are nil
+
+    @Test("Restore positions the matcher-selected element, not the first nil-id window")
+    func positionsMatcherSelectedElementWhenIdsAreNil() {
+        let config = AppMatchingConfig(
+            multiWindowApps: ["com.microsoft.edgemac"],
+            tabEnabledApps: [],
+            tabMatchThreshold: 0.5
+        )
+
+        // Two distinct sentinel AX elements (system-server elements for different pids).
+        let elementAlpha = AXUIElementCreateApplication(501)
+        let elementBeta = AXUIElementCreateApplication(502)
+        let stackedFrame = CGRect(x: 65, y: 51, width: 1514, height: 1049)
+
+        // Both records have nil identifiers — matching can only proceed by title.
+        let records = [
+            CurrentWindowRecord(
+                element: elementAlpha,
+                currentWindow: CurrentWindow(
+                    bundleIdentifier: "com.microsoft.edgemac",
+                    title: "Alpha",
+                    frame: stackedFrame,
+                    windowIdentifier: nil,
+                    tabs: nil
+                )
+            ),
+            CurrentWindowRecord(
+                element: elementBeta,
+                currentWindow: CurrentWindow(
+                    bundleIdentifier: "com.microsoft.edgemac",
+                    title: "Beta",
+                    frame: stackedFrame,
+                    windowIdentifier: nil,
+                    tabs: nil
+                )
+            )
+        ]
+
+        // The saved window is "Beta" → must move elementBeta, not the first nil-id element.
+        let targetFrame = CGRect(x: 900, y: 200, width: 1200, height: 800)
+        let snapshots = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.microsoft.edgemac",
+                applicationName: "Microsoft Edge",
+                windowTitle: "Beta",
+                displayIdentifier: "display-1",
+                frame: targetFrame,
+                windowIdentifier: nil
+            )
+        ]
+
+        let spy = SpyElementPositioning()
+        let positioner = WindowPositioner(
+            config: config,
+            currentWindowProvider: FakeCurrentWindowProvider(records: records),
+            elementPositioning: spy
+        )
+
+        let results = positioner.restoreWindows(snapshots: snapshots)
+
+        #expect(results.count == 1)
+        #expect(results[0].success)
+        #expect(spy.positioned.count == 1)
+        // The element moved must be Beta's element (identity), at the saved frame.
+        #expect(CFEqual(spy.positioned[0].element, elementBeta))
+        #expect(!CFEqual(spy.positioned[0].element, elementAlpha))
+        #expect(spy.positioned[0].frame == targetFrame)
+    }
+
+    @Test("Restore result preserves both AX position and size error codes")
+    func restoreResultPreservesPositionAndSizeErrorCodes() {
+        let config = AppMatchingConfig(multiWindowApps: [], tabEnabledApps: [], tabMatchThreshold: 0.5)
+
+        let record = CurrentWindowRecord(
+            element: AXUIElementCreateApplication(601),
+            currentWindow: CurrentWindow(
+                bundleIdentifier: "com.apple.calculator",
+                title: "Calculator",
+                frame: CGRect(x: 0, y: 0, width: 400, height: 300),
+                windowIdentifier: 42,
+                tabs: nil
+            )
+        )
+        let snapshots = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.apple.calculator",
+                applicationName: "Calculator",
+                windowTitle: "Calculator",
+                displayIdentifier: "display-1",
+                frame: CGRect(x: 100, y: 100, width: 400, height: 300),
+                windowIdentifier: 42
+            )
+        ]
+
+        let spy = SpyElementPositioning()
+        spy.result = ElementPositionResult(
+            positioned: false,
+            positionError: .cannotComplete,
+            sizeError: .notImplemented
+        )
+
+        let positioner = WindowPositioner(
+            config: config,
+            currentWindowProvider: FakeCurrentWindowProvider(records: [record]),
+            elementPositioning: spy
+        )
+
+        let results = positioner.restoreWindows(snapshots: snapshots)
+
+        #expect(results.count == 1)
+        #expect(!results[0].success)
+        let error = results[0].error ?? ""
+        #expect(error.contains(String(AXError.cannotComplete.rawValue)))
+        #expect(error.contains(String(AXError.notImplemented.rawValue)))
+    }
+
 
     @Test("WindowPositioner protocol can restore windows")
     func protocolRestoresWindows() {
@@ -255,6 +374,30 @@ struct WindowPositionerTests {
         #expect(results[0].success)
         #expect(results[0].snapshot.windowIdentifier == 12345)  // Matched by windowId
         #expect(results[0].snapshot.frame.origin.x == 100)  // Position from first snapshot
+    }
+}
+
+// Records which element/frame each position call targeted; verifies minimize instantly
+// so the retry loop never sleeps.
+final class SpyElementPositioning: WindowElementPositioning {
+    var positioned: [(element: AXUIElement, frame: CGRect)] = []
+    var result: ElementPositionResult = ElementPositionResult(positioned: true, positionError: nil, sizeError: nil)
+
+    func position(_ element: AXUIElement, to frame: CGRect) -> ElementPositionResult {
+        positioned.append((element: element, frame: frame))
+        return result
+    }
+
+    func setMinimized(_ element: AXUIElement, _ minimized: Bool) -> Bool {
+        return true
+    }
+}
+
+final class FakeCurrentWindowProvider: CurrentWindowProviding {
+    let records: [CurrentWindowRecord]
+    init(records: [CurrentWindowRecord]) { self.records = records }
+    func currentWindows(forBundleIdentifiers bundleIdentifiers: Set<String>) -> [CurrentWindowRecord] {
+        return records
     }
 }
 

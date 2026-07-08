@@ -762,4 +762,66 @@ struct WindowMatcherTests {
         #expect(matches[0].current.windowIdentifier == 12345)
         #expect(matches[0].current.title == "GitHub")
     }
+
+    // MARK: - Cycle 0 Guard: stacked same-frame same-title windows
+
+    @Test("Distinct ids pair correctly even when frame and title are identical")
+    func distinctIdsPairCorrectlyWhenFrameAndTitleIdentical() {
+        let config = AppMatchingConfig(
+            multiWindowApps: ["com.microsoft.edgemac"],
+            tabEnabledApps: [],
+            tabMatchThreshold: 0.5
+        )
+
+        let sharedFrame = CGRect(x: 65, y: 51, width: 1514, height: 1049)
+        let sharedTitle = "trustforge - Microsoft Edge - Trust Forge - Admin"
+
+        let savedSnapshots = [
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.microsoft.edgemac",
+                applicationName: "Microsoft Edge",
+                windowTitle: sharedTitle,
+                displayIdentifier: "display-1",
+                frame: sharedFrame,
+                lastSeenAt: Date(),
+                windowIdentifier: 252
+            ),
+            WindowSnapshot(
+                applicationBundleIdentifier: "com.microsoft.edgemac",
+                applicationName: "Microsoft Edge",
+                windowTitle: sharedTitle,
+                displayIdentifier: "display-1",
+                frame: sharedFrame,
+                lastSeenAt: Date(),
+                windowIdentifier: 352
+            )
+        ]
+
+        let currentWindows: [CurrentWindow] = [
+            CurrentWindow(
+                bundleIdentifier: "com.microsoft.edgemac",
+                title: sharedTitle,
+                frame: sharedFrame,
+                windowIdentifier: 252,
+                tabs: nil
+            ),
+            CurrentWindow(
+                bundleIdentifier: "com.microsoft.edgemac",
+                title: sharedTitle,
+                frame: sharedFrame,
+                windowIdentifier: 352,
+                tabs: nil
+            )
+        ]
+
+        let matcher = WindowMatcher(config: config)
+        let matches = matcher.findMatches(saved: savedSnapshots, current: currentWindows)
+
+        #expect(matches.count == 2)
+        // Each saved id must pair with the SAME current id — no cross-pairing.
+        for match in matches {
+            #expect(match.saved.windowIdentifier == match.current.windowIdentifier)
+            #expect(match.reason == .windowIdentifier)
+        }
+    }
 }

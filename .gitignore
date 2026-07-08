@@ -10,3 +10,7 @@ DerivedData/
 # Build artifacts
 *.app/
 AppIcon.iconset/
+.reviews/
+
+# Local Claude Code settings (machine-specific permissions)
+.claude/settings.local.json
