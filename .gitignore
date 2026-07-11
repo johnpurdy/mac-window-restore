@@ -10,3 +10,11 @@ DerivedData/
 # Build artifacts
 *.app/
 AppIcon.iconset/
+.reviews/
+
+# Generated spec-review / code-review assessment documents
+specs/*-assessment.md
+specs/*-assessment-pass*.md
+
+# Local Claude Code settings (machine-specific permissions)
+.claude/settings.local.json
