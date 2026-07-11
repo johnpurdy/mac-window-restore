@@ -48,12 +48,30 @@ public struct WindowRestoreResult: Sendable {
 }
 
 /// Restores windows to saved positions using matching strategies from AppMatchingConfig
+/// A current window read from the Accessibility layer, before its `CGWindowID` is
+/// resolved. Mirrors `RawEnumeratedWindow` on the save side. Note: the restore side
+/// reads no minimized state — it resolves an id for every window (parity with 1.0.4).
+struct RawCurrentWindow {
+    let element: AXUIElement
+    let bundleIdentifier: String
+    let title: String
+    let frame: CGRect
+    let tabs: [String]?
+}
+
 public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
     private let config: AppMatchingConfig
+    private let resolver: WindowIdentifierResolving
     private let tabEnumerator = TabEnumerator()
 
     public init(config: AppMatchingConfig = AppMatchingConfig.loadOrDefault()) {
         self.config = config
+        self.resolver = ExactWindowIdentifierResolver()
+    }
+
+    init(config: AppMatchingConfig = AppMatchingConfig.loadOrDefault(), resolver: WindowIdentifierResolving) {
+        self.config = config
+        self.resolver = resolver
     }
 
     public func restoreWindows(snapshots: [WindowSnapshot]) -> [WindowRestoreResult] {
@@ -83,7 +101,17 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
                 continue
             }
 
-            log("Restoring: \"\(match.saved.windowTitle)\" matched to \"\(match.current.title)\"")
+            let savedIdentifier = match.saved.windowIdentifier.map(String.init) ?? "nil"
+            let currentIdentifier = match.current.windowIdentifier.map(String.init) ?? "nil"
+            let matchBasis: String
+            if let saved = match.saved.windowIdentifier,
+               let current = match.current.windowIdentifier,
+               saved == current {
+                matchBasis = "identifier"
+            } else {
+                matchBasis = "title-or-tab"
+            }
+            log("Restoring: \"\(match.saved.windowTitle)\" [savedIdentifier=\(savedIdentifier)] -> \"\(match.current.title)\" [currentIdentifier=\(currentIdentifier)] via \(matchBasis)")
 
             // Position the window
             let result = positionWindow(window: windowInfo.element, snapshot: match.saved)
@@ -110,7 +138,33 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
     // MARK: - Get Current Windows
 
     private func getCurrentWindows(for snapshots: [WindowSnapshot]) -> [(element: AXUIElement, currentWindow: CurrentWindow)] {
-        var results: [(element: AXUIElement, currentWindow: CurrentWindow)] = []
+        let rawWindows = readRawCurrentWindows(for: snapshots)
+        return Self.assignCurrentWindows(rawWindows: rawWindows, resolver: resolver)
+    }
+
+    /// Pure assignment step: resolve the exact `CGWindowID` for every current window.
+    /// The restore side applies no minimized guard — parity with 1.0.4, which included
+    /// minimized windows in the current-window id pool.
+    static func assignCurrentWindows(
+        rawWindows: [RawCurrentWindow],
+        resolver: WindowIdentifierResolving
+    ) -> [(element: AXUIElement, currentWindow: CurrentWindow)] {
+        rawWindows.map { raw in
+            let currentWindow = CurrentWindow(
+                bundleIdentifier: raw.bundleIdentifier,
+                title: raw.title,
+                frame: raw.frame,
+                windowIdentifier: resolver.windowIdentifier(for: raw.element),
+                tabs: raw.tabs
+            )
+            return (element: raw.element, currentWindow: currentWindow)
+        }
+    }
+
+    // MARK: - Accessibility reading layer
+
+    private func readRawCurrentWindows(for snapshots: [WindowSnapshot]) -> [RawCurrentWindow] {
+        var rawWindows: [RawCurrentWindow] = []
 
         // Get unique bundle IDs from snapshots
         let bundleIds = Set(snapshots.map { $0.applicationBundleIdentifier })
@@ -129,10 +183,6 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
             guard axResult == .success, let windows = windowsRef as? [AXUIElement] else {
                 continue
             }
-
-            // Get CGWindowList for correlating windowIdentifiers
-            let cgWindows = getCGWindowsForPid(pid)
-            var usedCGWindowIds: Set<Int> = []
 
             let supportsTabs = config.isTabEnabledApp(bundleId)
 
@@ -163,65 +213,20 @@ public final class WindowPositioner: WindowPositioning, @unchecked Sendable {
 
                 let frame = CGRect(origin: position, size: size)
 
-                // Correlate with CGWindowList to get windowIdentifier
-                let windowIdentifier = findCGWindowIdentifier(frame: frame, cgWindows: cgWindows, excludedIds: usedCGWindowIds)
-                if let matchedId = windowIdentifier {
-                    usedCGWindowIds.insert(matchedId)
-                }
-
                 // Extract tabs for browser windows
                 let tabs: [String]? = supportsTabs ? tabEnumerator.extractTabs(from: window) : nil
 
-                let currentWindow = CurrentWindow(
+                rawWindows.append(RawCurrentWindow(
+                    element: window,
                     bundleIdentifier: bundleId,
                     title: title,
                     frame: frame,
-                    windowIdentifier: windowIdentifier,
                     tabs: tabs
-                )
-
-                results.append((element: window, currentWindow: currentWindow))
+                ))
             }
         }
 
-        return results
-    }
-
-    private func getCGWindowsForPid(_ pid: pid_t) -> [(windowIdentifier: Int, bounds: CGRect)] {
-        let options: CGWindowListOption = [.excludeDesktopElements]
-        guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return []
-        }
-
-        return windowInfoList.compactMap { windowInfo -> (windowIdentifier: Int, bounds: CGRect)? in
-            guard let windowNumber = windowInfo[kCGWindowNumber as String] as? Int,
-                  let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-                  ownerPID == pid,
-                  let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
-                  let x = boundsDict["X"] as? CGFloat,
-                  let y = boundsDict["Y"] as? CGFloat,
-                  let width = boundsDict["Width"] as? CGFloat,
-                  let height = boundsDict["Height"] as? CGFloat else {
-                return nil
-            }
-
-            let bounds = CGRect(x: x, y: y, width: width, height: height)
-            return (windowIdentifier: windowNumber, bounds: bounds)
-        }
-    }
-
-    private func findCGWindowIdentifier(frame: CGRect, cgWindows: [(windowIdentifier: Int, bounds: CGRect)], excludedIds: Set<Int>) -> Int? {
-        let tolerance: CGFloat = 2.0
-        for cgWindow in cgWindows {
-            if excludedIds.contains(cgWindow.windowIdentifier) { continue }
-            if abs(cgWindow.bounds.origin.x - frame.origin.x) <= tolerance &&
-               abs(cgWindow.bounds.origin.y - frame.origin.y) <= tolerance &&
-               abs(cgWindow.bounds.width - frame.width) <= tolerance &&
-               abs(cgWindow.bounds.height - frame.height) <= tolerance {
-                return cgWindow.windowIdentifier
-            }
-        }
-        return nil
+        return rawWindows
     }
 
     // MARK: - Position Window

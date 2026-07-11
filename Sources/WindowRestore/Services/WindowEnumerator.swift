@@ -10,27 +10,77 @@ public protocol WindowEnumerating: Sendable {
     func enumerateWindows() -> [WindowSnapshot]
 }
 
+/// A window read from the Accessibility layer, before its `CGWindowID` is resolved.
+/// The split between reading these (untestable, touches live AX) and assigning ids
+/// (pure, uses an injected resolver) is what makes the id logic unit-testable.
+struct RawEnumeratedWindow {
+    let element: AXUIElement
+    let applicationBundleIdentifier: String
+    let applicationName: String
+    let windowTitle: String
+    let displayIdentifier: String
+    let frame: CGRect
+    let isMinimized: Bool
+    let tabs: [String]?
+}
+
 public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
     private let displayInfoProvider: DisplayInfoProviding
+    private let resolver: WindowIdentifierResolving
     private let tabEnumerator = TabEnumerator()
 
     public init(displayInfoProvider: DisplayInfoProviding = DisplayInfoProvider()) {
         self.displayInfoProvider = displayInfoProvider
+        self.resolver = ExactWindowIdentifierResolver()
+    }
+
+    init(displayInfoProvider: DisplayInfoProviding = DisplayInfoProvider(), resolver: WindowIdentifierResolving) {
+        self.displayInfoProvider = displayInfoProvider
+        self.resolver = resolver
     }
 
     public func enumerateWindows() -> [WindowSnapshot] {
-        let displays = displayInfoProvider.getDisplays()
+        let rawWindows = readRawWindows()
+        return Self.assignSnapshots(rawWindows: rawWindows, resolver: resolver)
+    }
 
-        // Get CGWindowList for correlating windowIdentifiers
-        let cgWindows = getCGWindowList()
+    /// Pure assignment step: map each raw window to a snapshot, resolving its exact
+    /// `CGWindowID` — except minimized windows, which are withheld an id (`nil`) to
+    /// reproduce 1.0.4's `.optionOnScreenOnly` exclusion and keep them out of
+    /// `CGWindowID`-based matching. The resolver is never consulted for a minimized
+    /// window.
+    static func assignSnapshots(
+        rawWindows: [RawEnumeratedWindow],
+        resolver: WindowIdentifierResolving,
+        now: Date = Date()
+    ) -> [WindowSnapshot] {
+        rawWindows.map { raw in
+            let windowIdentifier = raw.isMinimized ? nil : resolver.windowIdentifier(for: raw.element)
+            return WindowSnapshot(
+                applicationBundleIdentifier: raw.applicationBundleIdentifier,
+                applicationName: raw.applicationName,
+                windowTitle: raw.windowTitle,
+                displayIdentifier: raw.displayIdentifier,
+                frame: raw.frame,
+                lastSeenAt: now,
+                isMinimized: raw.isMinimized,
+                windowIdentifier: windowIdentifier,
+                tabs: raw.tabs
+            )
+        }
+    }
+
+    // MARK: - Accessibility reading layer
+
+    private func readRawWindows() -> [RawEnumeratedWindow] {
+        let displays = displayInfoProvider.getDisplays()
 
         // Get all running applications with regular activation policy (normal apps)
         let runningApps = NSWorkspace.shared.runningApplications.filter {
             $0.activationPolicy == .regular
         }
 
-        var snapshots: [WindowSnapshot] = []
-        var usedCGWindowIds: Set<Int> = []
+        var rawWindows: [RawEnumeratedWindow] = []
 
         for app in runningApps {
             guard let bundleIdentifier = app.bundleIdentifier else { continue }
@@ -57,18 +107,6 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                 // Find which display this window is on
                 let displayIdentifier = findDisplayForWindow(frame: axWindow.frame, displays: displays)
 
-                // Correlate with CGWindowList to get windowIdentifier
-                // Track used IDs to avoid assigning the same ID to multiple windows
-                let windowIdentifier = findCGWindowIdentifier(
-                    pid: pid,
-                    frame: axWindow.frame,
-                    cgWindows: cgWindows,
-                    excludedIds: usedCGWindowIds
-                )
-                if let assignedId = windowIdentifier {
-                    usedCGWindowIds.insert(assignedId)
-                }
-
                 // Extract tabs for browser windows
                 var tabs: [String]? = nil
                 if supportsTabs {
@@ -80,22 +118,20 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
                     }
                 }
 
-                let snapshot = WindowSnapshot(
+                rawWindows.append(RawEnumeratedWindow(
+                    element: axWindow.element,
                     applicationBundleIdentifier: bundleIdentifier,
                     applicationName: appName,
                     windowTitle: axWindow.title,
                     displayIdentifier: displayIdentifier,
                     frame: axWindow.frame,
                     isMinimized: axWindow.isMinimized,
-                    windowIdentifier: windowIdentifier,
                     tabs: tabs
-                )
-
-                snapshots.append(snapshot)
+                ))
             }
         }
 
-        return snapshots
+        return rawWindows
     }
 
     private func getAXWindows(pid: pid_t) -> [(element: AXUIElement, title: String, frame: CGRect, isMinimized: Bool)] {
@@ -171,56 +207,5 @@ public final class WindowEnumerator: WindowEnumerating, @unchecked Sendable {
 
         // Fallback: return first display identifier or "unknown"
         return displays.first?.identifier ?? "unknown"
-    }
-
-    /// Get all windows from CGWindowList with their identifiers and bounds
-    private func getCGWindowList() -> [(windowIdentifier: Int, pid: pid_t, bounds: CGRect)] {
-        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-        guard let windowInfoList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] else {
-            return []
-        }
-
-        return windowInfoList.compactMap { windowInfo -> (windowIdentifier: Int, pid: pid_t, bounds: CGRect)? in
-            guard let windowNumber = windowInfo[kCGWindowNumber as String] as? Int,
-                  let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? pid_t,
-                  let boundsDict = windowInfo[kCGWindowBounds as String] as? [String: Any],
-                  let x = boundsDict["X"] as? CGFloat,
-                  let y = boundsDict["Y"] as? CGFloat,
-                  let width = boundsDict["Width"] as? CGFloat,
-                  let height = boundsDict["Height"] as? CGFloat else {
-                return nil
-            }
-
-            let bounds = CGRect(x: x, y: y, width: width, height: height)
-            return (windowIdentifier: windowNumber, pid: ownerPID, bounds: bounds)
-        }
-    }
-
-    /// Find the CGWindowID for an AX window by matching PID and frame
-    private func findCGWindowIdentifier(
-        pid: pid_t,
-        frame: CGRect,
-        cgWindows: [(windowIdentifier: Int, pid: pid_t, bounds: CGRect)],
-        excludedIds: Set<Int>
-    ) -> Int? {
-        // Filter to windows from the same process
-        let processWindows = cgWindows.filter { $0.pid == pid }
-
-        // Find a window with matching bounds (allowing small tolerance for rounding)
-        // Skip IDs that have already been assigned to other windows
-        let tolerance: CGFloat = 2.0
-        for cgWindow in processWindows {
-            if excludedIds.contains(cgWindow.windowIdentifier) {
-                continue
-            }
-            if abs(cgWindow.bounds.origin.x - frame.origin.x) <= tolerance &&
-               abs(cgWindow.bounds.origin.y - frame.origin.y) <= tolerance &&
-               abs(cgWindow.bounds.width - frame.width) <= tolerance &&
-               abs(cgWindow.bounds.height - frame.height) <= tolerance {
-                return cgWindow.windowIdentifier
-            }
-        }
-
-        return nil
     }
 }
