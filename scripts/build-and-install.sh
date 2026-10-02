@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-SIGNING_IDENTITY="Developer ID Application: John Purdy (2U3X822638)"
+SIGNING_IDENTITY="Developer ID Application: MacGregor Consulting LLC (2U3X822638)"
 APP_PATH="/Applications/Window Restore.app"
 BINARY_NAME="WindowRestore"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

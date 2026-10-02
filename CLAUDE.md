@@ -22,7 +22,7 @@ swift test
 # Manual install with Developer ID signing
 swift build -c release && \
 cp "$(swift build -c release --show-bin-path)/WindowRestore" "/Applications/Window Restore.app/Contents/MacOS/" && \
-codesign --force --deep --options runtime --sign "Developer ID Application: John Purdy (2U3X822638)" "/Applications/Window Restore.app"
+codesign --force --deep --options runtime --sign "Developer ID Application: MacGregor Consulting LLC (2U3X822638)" "/Applications/Window Restore.app"
 
 # Run in dev mode (with logging)
 .build/debug/WindowRestore --dev

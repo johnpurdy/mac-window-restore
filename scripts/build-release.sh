@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-SIGNING_IDENTITY="Developer ID Application: John Purdy (2U3X822638)"
+SIGNING_IDENTITY="Developer ID Application: MacGregor Consulting LLC (2U3X822638)"
 NOTARIZE_PROFILE="WindowRestore-Notarize"
 APP_NAME="Window Restore"
 BINARY_NAME="WindowRestore"
