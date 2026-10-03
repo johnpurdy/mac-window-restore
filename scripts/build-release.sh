@@ -66,9 +66,23 @@ echo "Verifying signature..."
 codesign --verify --verbose "$APP_PATH"
 
 # Create DMG
+# Creating "/Volumes/Window Restore/Window Restore.app" directly is refused with
+# "Operation not permitted" on this machine (cause unknown), so build the image
+# under a temporary volume name and rename the volume before compressing it.
 echo "Creating DMG..."
-rm -f "$DMG_PATH"
-hdiutil create -volname "$APP_NAME" -srcfolder "$APP_PATH" -ov -format UDZO "$DMG_PATH"
+TEMPORARY_VOLUME_NAME="WindowRestoreBuild"
+WRITABLE_DMG_PATH="$BUILD_DIR/WindowRestore-writable.dmg"
+rm -f "$DMG_PATH" "$WRITABLE_DMG_PATH"
+hdiutil create -volname "$TEMPORARY_VOLUME_NAME" -srcfolder "$APP_PATH" -format UDRW "$WRITABLE_DMG_PATH"
+DEVICE=$(hdiutil attach -nobrowse -noverify "$WRITABLE_DMG_PATH" | awk -v volume="/Volumes/$TEMPORARY_VOLUME_NAME" '$NF == volume {print $1}')
+if [[ -z "$DEVICE" ]]; then
+    echo "Error: could not find the mounted volume $TEMPORARY_VOLUME_NAME"
+    exit 1
+fi
+diskutil rename "$DEVICE" "$APP_NAME"
+hdiutil detach "$DEVICE"
+hdiutil convert "$WRITABLE_DMG_PATH" -format UDZO -o "$DMG_PATH"
+rm -f "$WRITABLE_DMG_PATH"
 
 # Sign the DMG
 echo "Signing DMG..."
