@@ -44,7 +44,9 @@ Sources/WindowRestore/
 | `WindowEnumerator` | Gets all windows via Accessibility API + CGWindowList (includes minimized, captures windowIdentifier) |
 | `WindowPositioner` | Moves windows via AXUIElement, matches by windowIdentifier first then title |
 | `WindowMerger` | Merges windows by windowIdentifier (or title fallback), prunes stale entries |
-| `DisplayMonitor` | Detects monitor connect/disconnect |
+| `DisplayMonitor` | Reports one event per display per reconfiguration (added, removed, moved, mode changed, ...) via the Core Graphics reconfiguration callback |
+| `SpaceMonitor` | Reports desktop (Space) changes |
+| `RestoreScheduler` | Decides when to restore: one restarting countdown after display events, a short delay after a desktop change, at most one pending restore |
 | `PersistenceService` | JSON storage to ~/Library/Application Support/WindowRestore/ |
 | `SnapshotScheduler` | Configurable save timer (15s, 30s, 1min, 2min, 5min) |
 | `RestoreCoordinator` | Orchestrates the restore flow |
@@ -53,7 +55,7 @@ Sources/WindowRestore/
 ### Data Flow
 
 1. **Save**: `SnapshotScheduler` → `WindowEnumerator` → `WindowMerger` → `PersistenceService`
-2. **Restore**: `DisplayMonitor` or hotkey → `RestoreCoordinator` → `WindowPositioner`
+2. **Restore**: `DisplayMonitor` / `SpaceMonitor` → `RestoreScheduler` → `RestoreCoordinator` → `WindowPositioner` (hotkey goes straight to `RestoreCoordinator`)
 
 ### Key Models
 
@@ -69,7 +71,8 @@ Sources/WindowRestore/
 |---------|----------------|
 | Auto-save | `SnapshotScheduler` with configurable interval (UserDefaults) |
 | Pause Saving | Stops `SnapshotScheduler`, session-only (not persisted) |
-| Auto-restore | `DisplayMonitor` triggers on monitor connect/disconnect |
+| Auto-restore | `DisplayMonitor` events restart a 10 s countdown in `RestoreScheduler`; one restore runs when it expires, if a display was added (connect toggle) or removed (disconnect toggle) during the countdown |
+| Restore on desktop change | `SpaceMonitor` → `RestoreScheduler`, 500 ms delay; absorbed while a display countdown is running |
 | Auto-restore toggles | UserDefaults `RestoreOnConnectEnabled` and `RestoreOnDisconnectEnabled`, both default true |
 | Keyboard shortcuts | Configurable via `KeyboardShortcutManager` using KeyboardShortcuts library |
 | Save Frequency menu | 15s, 30s, 1min, 2min, 5min options |
@@ -112,7 +115,8 @@ Sources/WindowRestore/
 | `CGWindowListCopyWindowInfo` | Get CGWindowID for stable window identification |
 | `NSWorkspace.runningApplications` | Enumerate running apps for window enumeration |
 | `KeyboardShortcuts` (library) | Configurable global hotkeys |
-| `NSApplication.didChangeScreenParametersNotification` | Detect monitor changes |
+| `CGDisplayRegisterReconfigurationCallback` | Detect monitor changes, per display, with add/remove/moved/mode flags |
+| `NSWorkspace.activeSpaceDidChangeNotification` | Detect desktop (Space) changes |
 | `CGDirectDisplay` | Get display properties |
 | `SMAppService` | Launch at login (macOS 13+) |
 

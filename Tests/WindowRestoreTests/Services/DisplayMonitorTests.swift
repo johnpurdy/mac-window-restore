@@ -1,113 +1,64 @@
 import Testing
 import Foundation
-import AppKit
+import CoreGraphics
 @testable import WindowRestore
 
-// Thread-safe counts storage for tests
-final class AtomicCounts: @unchecked Sendable {
-    private var oldCount: Int?
-    private var newCount: Int?
+// Thread-safe event store for tests
+final class RecordedDisplayEvents: @unchecked Sendable {
+    private var events: [DisplayReconfigurationEvent] = []
     private let lock = NSLock()
 
-    func set(oldCount: Int, newCount: Int) {
+    func append(_ event: DisplayReconfigurationEvent) {
         lock.lock()
         defer { lock.unlock() }
-        self.oldCount = oldCount
-        self.newCount = newCount
+        events.append(event)
     }
 
-    func getOldCount() -> Int? {
+    func all() -> [DisplayReconfigurationEvent] {
         lock.lock()
         defer { lock.unlock() }
-        return oldCount
-    }
-
-    func getNewCount() -> Int? {
-        lock.lock()
-        defer { lock.unlock() }
-        return newCount
+        return events
     }
 }
 
 @Suite("DisplayMonitor Tests")
 struct DisplayMonitorTests {
 
-    @Test("DisplayMonitor calls callback when display count changes")
-    func callsCallbackOnDisplayChange() async throws {
-        let counter = AtomicCounter()
+    @Test("DisplayMonitor delivers one callback per event in a reconfiguration")
+    func deliversOneCallbackPerEvent() {
+        let recorded = RecordedDisplayEvents()
+        let monitor = DisplayMonitor(onDisplayReconfiguration: { recorded.append($0) })
 
-        let monitor = DisplayMonitor(
-            onDisplayChange: { _, _ in
-                counter.increment()
-            }
-        )
+        monitor.handleReconfiguration(displayIdentifier: 5, flags: [.addFlag, .movedFlag])
 
-        monitor.start()
-
-        // Simulate a display change notification
-        NotificationCenter.default.post(
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-
-        // Give time for notification to be processed
-        try await Task.sleep(for: .milliseconds(100))
-
-        monitor.stop()
-
-        #expect(counter.get() >= 1)
+        #expect(recorded.all() == [
+            DisplayReconfigurationEvent(displayIdentifier: 5, kind: .added),
+            DisplayReconfigurationEvent(displayIdentifier: 5, kind: .moved),
+        ])
     }
 
-    @Test("DisplayMonitor provides old and new display counts")
-    func providesDisplayCounts() async throws {
-        let capturedCounts = AtomicCounts()
+    @Test("DisplayMonitor delivers nothing for the begin-configuration notice")
+    func deliversNothingForBeginConfiguration() {
+        let recorded = RecordedDisplayEvents()
+        let monitor = DisplayMonitor(onDisplayReconfiguration: { recorded.append($0) })
 
-        let monitor = DisplayMonitor(
-            onDisplayChange: { oldCount, newCount in
-                capturedCounts.set(oldCount: oldCount, newCount: newCount)
-            }
-        )
+        monitor.handleReconfiguration(displayIdentifier: 5, flags: .beginConfigurationFlag)
 
-        monitor.start()
-
-        // Simulate a display change notification
-        NotificationCenter.default.post(
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-
-        try await Task.sleep(for: .milliseconds(100))
-
-        monitor.stop()
-
-        // Should have captured some values
-        #expect(capturedCounts.getNewCount() != nil)
+        #expect(recorded.all().isEmpty)
     }
 
-    @Test("DisplayMonitor does not call callback after stop")
-    func doesNotCallAfterStop() async throws {
-        let counter = AtomicCounter()
+    @Test("DisplayMonitor registers once and can be stopped")
+    func registersOnceAndStops() throws {
+        let monitor = DisplayMonitor(onDisplayReconfiguration: { _ in })
 
-        let monitor = DisplayMonitor(
-            onDisplayChange: { _, _ in
-                counter.increment()
-            }
-        )
+        try monitor.start()
+        try monitor.start()
+        #expect(monitor.isRegistered)
 
-        monitor.start()
         monitor.stop()
+        #expect(!monitor.isRegistered)
 
-        let countAfterStop = counter.get()
-
-        // Simulate a display change notification
-        NotificationCenter.default.post(
-            name: NSApplication.didChangeScreenParametersNotification,
-            object: nil
-        )
-
-        try await Task.sleep(for: .milliseconds(100))
-
-        // Count should not have increased
-        #expect(counter.get() == countAfterStop)
+        monitor.stop()
+        #expect(!monitor.isRegistered)
     }
 }
