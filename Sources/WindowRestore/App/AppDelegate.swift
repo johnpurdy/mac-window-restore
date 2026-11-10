@@ -56,6 +56,13 @@ private let restoreOnSpaceChangeKey = "RestoreOnSpaceChangeEnabled"
 // Debounce delay after display changes before allowing saves (seconds)
 private let saveDebounceAfterDisplayChange: TimeInterval = 60.0
 
+// One restarting countdown after display reconfiguration: the restore runs this long after the LAST event.
+// The displays themselves settle in under two seconds; the rest is for applications to finish relaying out.
+private let restoreCountdownAfterDisplayChange: Duration = .seconds(10)
+
+// Delay after a desktop (Space) change before restoring, when no display countdown is running
+private let restoreDelayAfterDesktopChange: Duration = .milliseconds(500)
+
 // Available stale window thresholds (in days)
 private let staleThresholdOptions: [(label: String, days: Int)] = [
     ("1 day", 1),
@@ -71,6 +78,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
     private var snapshotScheduler: SnapshotScheduler?
     private var displayMonitor: DisplayMonitor?
     private var spaceMonitor: SpaceMonitor?
+    private var restoreScheduler: RestoreScheduler<ContinuousClock>?
     private let keyboardShortcutManager = KeyboardShortcutManager()
     private let shortcutsSettingsWindow = ShortcutsSettingsWindow()
 
@@ -170,9 +178,12 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         startScheduler()
         log("Scheduler started (\(Int(currentSaveInterval)) second interval)")
 
+        // The scheduler decides when monitors' events turn into a restore
+        startRestoreScheduler()
+        log("Restore scheduler started (\(restoreCountdownAfterDisplayChange) countdown after display changes)")
+
         // Start display monitor
         startDisplayMonitor()
-        log("Display monitor started")
 
         // Start space monitor
         startSpaceMonitor()
@@ -183,6 +194,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
 
     public func applicationWillTerminate(_ notification: Notification) {
         snapshotScheduler?.stop()
+        restoreScheduler?.cancelPendingRestores()
         displayMonitor?.stop()
         spaceMonitor?.stop()
     }
@@ -461,9 +473,30 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
         log("Save interval changed to \(Int(interval)) seconds")
     }
 
+    private func startRestoreScheduler() {
+        restoreScheduler = RestoreScheduler(
+            countdown: restoreCountdownAfterDisplayChange,
+            desktopChangeDelay: restoreDelayAfterDesktopChange,
+            clock: ContinuousClock(),
+            readToggles: { [unowned self] in
+                RestoreScheduler.Toggles(
+                    restoreOnConnect: self.isRestoreOnConnectEnabled,
+                    restoreOnDisconnect: self.isRestoreOnDisconnectEnabled,
+                    restoreOnDesktopChange: self.isRestoreOnSpaceChangeEnabled
+                )
+            },
+            onRestore: { [unowned self] in
+                self.restoreWindowPositions()
+            },
+            log: { message in
+                log(message)
+            }
+        )
+    }
+
     private func startDisplayMonitor() {
         displayMonitor = DisplayMonitor(
-            onDisplayChange: { [weak self] oldCount, newCount in
+            onDisplayReconfiguration: { [weak self] event in
                 Task { @MainActor in
                     guard let self = self else { return }
 
@@ -471,21 +504,17 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
                     self.saveDebounceUntil = Date().addingTimeInterval(saveDebounceAfterDisplayChange)
                     log("Display changed - save debounce active for \(Int(saveDebounceAfterDisplayChange))s")
 
-                    // Restore on monitor connect (5s delay for CGWindowList to stabilize)
-                    if newCount > oldCount && self.isRestoreOnConnectEnabled {
-                        try? await Task.sleep(for: .seconds(5))
-                        self.restoreWindowPositions()
-                    }
-
-                    // Restore on monitor disconnect (10s delay for apps to finish processing display change)
-                    if newCount < oldCount && self.isRestoreOnDisconnectEnabled {
-                        try? await Task.sleep(for: .seconds(10))
-                        self.restoreWindowPositions()
-                    }
+                    self.restoreScheduler?.displayDidChange(event)
                 }
             }
         )
-        displayMonitor?.start()
+
+        do {
+            try displayMonitor?.start()
+            log("Display monitor started")
+        } catch {
+            AppLogger.log("Display monitor failed to start, automatic restore on monitor changes is OFF: \(error)", category: AppLogger.monitor, level: .error)
+        }
     }
 
     private func startSpaceMonitor() {
@@ -493,12 +522,7 @@ public final class AppDelegate: NSObject, NSApplicationDelegate {
             onSpaceChange: { [weak self] in
                 Task { @MainActor in
                     guard let self = self else { return }
-
-                    if self.isRestoreOnSpaceChangeEnabled {
-                        // Small delay to let the space transition complete
-                        try? await Task.sleep(for: .milliseconds(500))
-                        self.restoreWindowPositions()
-                    }
+                    self.restoreScheduler?.desktopDidChange()
                 }
             }
         )
